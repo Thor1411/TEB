@@ -1,0 +1,301 @@
+.pdf-viewer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  overflow: auto;
+  position: relative;
+  background: #BBB6A5;
+}
+
+.canvas-container {
+  position: relative;
+  display: inline-block;
+  box-shadow: 0 4px 12px rgba(42, 47, 51, 0.25);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.pdf-viewer canvas {
+  background: white;
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border: 2px solid #8C9491;
+  transition: border-color 0.2s ease;
+}
+
+.pdf-viewer canvas.edit-mode {
+  cursor: crosshair;
+}
+
+.pdf-viewer canvas.text-mode {
+  border-color: #8C8C9C;
+}
+
+.pdf-viewer canvas.rectangle-mode {
+  border-color: #8C9491;
+}
+
+.pdf-viewer canvas.circle-mode {
+  border-color: #BBB6A5;
+}
+
+.pdf-viewer canvas.line-mode {
+  border-color: #8C8C9C;
+}
+
+.pdf-viewer canvas.highlight-mode {
+  border-color: #FFE066;
+}
+
+.drag-selection {
+  position: absolute;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.drag-selection.text-drag {
+  border: 2px dashed #8C8C9C;
+  background: rgba(140, 140, 156, 0.15);
+}
+
+.drag-selection.rectangle-drag {
+  border: 2px dashed #8C9491;
+  background: rgba(140, 148, 145, 0.15);
+}
+
+.drag-selection.circle-drag {
+  border: 2px dashed #BBB6A5;
+  background: rgba(187, 182, 165, 0.15);
+  border-radius: 50%;
+}
+
+.drag-selection.line-drag {
+  border: 2px dashed #8C8C9C;
+  background: rgba(140, 140, 156, 0.1);
+}
+
+.drag-selection.highlight-drag {
+  border: 2px dashed #FFE066;
+  background: rgba(255, 224, 102, 0.3);
+}
+
+.edit-hint {
+  position: fixed;
+  top: 5.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2A2F33;
+  color: #BBB6A5;
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(42, 47, 51, 0.4);
+  z-index: 1000;
+  border: 1px solid #8C9491;
+}
+
+/* Text Box Styles */
+.text-box {
+  position: absolute;
+  background: rgba(140, 140, 156, 0.15);
+  border: 2px solid #8C8C9C;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: move;
+  min-width: 100px;
+  max-width: 500px;
+  box-shadow: 0 2px 8px rgba(42, 47, 51, 0.2);
+  z-index: 100;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.text-box:hover {
+  background: rgba(140, 140, 156, 0.25);
+  border-color: #2A2F33;
+  box-shadow: 0 4px 12px rgba(42, 47, 51, 0.3);
+}
+
+.text-box-content {
+  outline: none;
+  min-width: 80px;
+  min-height: 24px;
+  cursor: text;
+  color: #2A2F33;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  word-wrap: break-word;
+  user-select: text;
+}
+
+.text-box-content:empty:before {
+  content: attr(placeholder);
+  color: #8C9491;
+  cursor: text;
+}
+
+.text-box-content:focus {
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 2px;
+  padding: 2px 4px;
+}
+
+.text-box-delete {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #2A2F33;
+  color: #BBB6A5;
+  border: 2px solid #8C9491;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  font-weight: bold;
+}
+
+.text-box-delete:hover {
+  background: #8C8C9C;
+  color: white;
+  transform: scale(1.1);
+}
+
+/* Image Box Styles */
+.image-box {
+  position: absolute;
+  border: 2px solid #8C9491;
+  box-shadow: 0 2px 8px rgba(42, 47, 51, 0.2);
+  z-index: 100;
+  transition: all 0.2s ease;
+  cursor: move;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.image-box:hover {
+  border-color: #2A2F33;
+  box-shadow: 0 4px 12px rgba(42, 47, 51, 0.3);
+}
+
+.image-box img {
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.image-box-delete {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #2A2F33;
+  color: #BBB6A5;
+  border: 2px solid #8C9491;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  font-weight: bold;
+  z-index: 101;
+}
+
+.image-box-delete:hover {
+  background: #8C8C9C;
+  color: white;
+  transform: scale(1.1);
+}
+
+/* Resize Handles */
+.resize-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #2A2F33;
+  border: 2px solid #BBB6A5;
+  border-radius: 50%;
+  z-index: 102;
+  transition: all 0.2s ease;
+}
+
+.resize-handle:hover {
+  background: #8C8C9C;
+  transform: scale(1.2);
+}
+
+.resize-se {
+  bottom: -6px;
+  right: -6px;
+  cursor: nwse-resize;
+}
+
+/* Text Layer Styles */
+.text-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 50;
+  overflow: hidden;
+}
+
+.text-layer span {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+}
+
+.text-layer span::selection {
+  background: rgba(0, 123, 255, 0.3);
+}
+
+/* Text Selection Highlights */
+.selection-group {
+  position: relative;
+}
+
+.text-selection-highlight {
+  position: absolute;
+  background: rgba(255, 255, 0, 0.3);
+  border: 1px dashed rgba(255, 200, 0, 0.5);
+  z-index: 95;
+  pointer-events: none;
+}
+
+.selection-delete {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #2A2F33;
+  color: #BBB6A5;
+  border: 2px solid #FFE066;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  font-weight: bold;
+  z-index: 96;
+}
+
+.selection-delete:hover {
+  background: #FFE066;
+  color: #2A2F33;
+  transform: scale(1.1);
+}
