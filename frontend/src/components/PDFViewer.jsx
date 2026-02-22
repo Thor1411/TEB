@@ -12,8 +12,17 @@ function PDFViewer({
   textBoxes,
   imageBoxes,
   textSelections,
+  rectangleBoxes,
+  circleBoxes,
+  lineBoxes,
   selectedTextId,
   setSelectedTextId,
+  selectedRectangleId,
+  setSelectedRectangleId,
+  selectedCircleId,
+  setSelectedCircleId,
+  selectedLineId,
+  setSelectedLineId,
   autoFocusTextBoxId,
   onAutoFocusTextBoxDone,
   onAddTextBox,
@@ -21,6 +30,12 @@ function PDFViewer({
   onRemoveTextBox,
   onUpdateImageBox,
   onRemoveImageBox,
+  onUpdateRectangleBox,
+  onRemoveRectangleBox,
+  onUpdateCircleBox,
+  onRemoveCircleBox,
+  onUpdateLineBox,
+  onRemoveLineBox,
   onTextSelection,
   onRemoveSelection,
   onAddRectangle,
@@ -38,8 +53,43 @@ function PDFViewer({
   const [draggingTextBoxId, setDraggingTextBoxId] = useState(null)
   const textBoxElementsRef = useRef(new Map())
   const textDragRef = useRef(null)
-  const [resizingImage, setResizingImage] = useState(null)
+  const imageBoxElementsRef = useRef(new Map())
+  const imageDragRef = useRef(null)
+  const imageResizeRef = useRef(null)
+  const [draggingImageBoxId, setDraggingImageBoxId] = useState(null)
+  const rectBoxElementsRef = useRef(new Map())
+  const rectDragRef = useRef(null)
+  const rectResizeRef = useRef(null)
+  const [draggingRectBoxId, setDraggingRectBoxId] = useState(null)
+  const circleBoxElementsRef = useRef(new Map())
+  const circleDragRef = useRef(null)
+  const circleResizeRef = useRef(null)
+  const [draggingCircleBoxId, setDraggingCircleBoxId] = useState(null)
+  const lineBoxElementsRef = useRef(new Map())
+  const lineDragRef = useRef(null)
+  const lineResizeRef = useRef(null)
+  const linesSvgRef = useRef(null)
+  const lineEndpointDragRef = useRef(null)
+  const [draggingLineBoxId, setDraggingLineBoxId] = useState(null)
   const [scale] = useState(1.5)
+
+  const getCanvasPdfScales = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+    if (!rect.width || !rect.height) return null
+
+    const scaleX = canvas.width / rect.width
+    const scaleY = canvas.height / rect.height
+
+    return {
+      rect,
+      scaleX,
+      scaleY,
+      pdfScaleX: scaleX / scale,
+      pdfScaleY: scaleY / scale
+    }
+  }
 
   const getCssFontFamily = (fontKey) => {
     // Normalize older stored values (from earlier iterations)
@@ -197,6 +247,774 @@ function PDFViewer({
     })
   }
 
+  const applyImageDragFrame = () => {
+    const drag = imageDragRef.current
+    if (!drag) return
+
+    const canvas = canvasRef.current
+    const el = imageBoxElementsRef.current.get(drag.id)
+    if (!canvas || !el) return
+
+    const rect = canvas.getBoundingClientRect()
+    let newDisplayX = drag.lastClientX - rect.left - drag.offsetX
+    let newDisplayY = drag.lastClientY - rect.top - drag.offsetY
+
+    newDisplayX = Math.max(0, Math.min(newDisplayX, rect.width - 10))
+    newDisplayY = Math.max(0, Math.min(newDisplayY, rect.height - 10))
+
+    el.style.left = `${newDisplayX}px`
+    el.style.top = `${newDisplayY}px`
+
+    drag.lastDisplayX = newDisplayX
+    drag.lastDisplayY = newDisplayY
+  }
+
+  const startImageBoxDrag = (e, imgBox) => {
+    if (!canvasRef.current) return
+    if (e.button !== undefined && e.button !== 0) return
+    if (!e.isPrimary) return
+
+    e.preventDefault()
+
+    const canvasRect = canvasRef.current.getBoundingClientRect()
+    const offsetX = (e.clientX - canvasRect.left) - imgBox.displayX
+    const offsetY = (e.clientY - canvasRect.top) - imgBox.displayY
+
+    imageDragRef.current = {
+      id: imgBox.id,
+      pointerId: e.pointerId,
+      offsetX,
+      offsetY,
+      lastClientX: e.clientX,
+      lastClientY: e.clientY,
+      lastDisplayX: imgBox.displayX,
+      lastDisplayY: imgBox.displayY,
+      width: imgBox.width,
+      height: imgBox.height
+    }
+
+    setDraggingImageBoxId(imgBox.id)
+    document.body.style.userSelect = 'none'
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const moveImageBoxDrag = (e) => {
+    const drag = imageDragRef.current
+    if (!drag) return
+    if (!e.isPrimary || drag.pointerId !== e.pointerId) return
+
+    drag.lastClientX = e.clientX
+    drag.lastClientY = e.clientY
+    applyImageDragFrame()
+  }
+
+  const endImageBoxDrag = (e) => {
+    const drag = imageDragRef.current
+    if (!drag) return
+    if (!e.isPrimary || drag.pointerId !== e.pointerId) return
+
+    applyImageDragFrame()
+
+    document.body.style.userSelect = ''
+    setDraggingImageBoxId(null)
+    imageDragRef.current = null
+
+    const scales = getCanvasPdfScales()
+    if (!scales) return
+    const newPdfX = drag.lastDisplayX * scales.pdfScaleX
+    const newPdfY = drag.lastDisplayY * scales.pdfScaleY
+    const newPdfWidth = (drag.width ?? 0) * scales.pdfScaleX
+    const newPdfHeight = (drag.height ?? 0) * scales.pdfScaleY
+
+    onUpdateImageBox(drag.id, {
+      displayX: drag.lastDisplayX,
+      displayY: drag.lastDisplayY,
+      pdfX: newPdfX,
+      pdfY: newPdfY,
+      pdfWidth: Number.isFinite(newPdfWidth) && newPdfWidth > 0 ? newPdfWidth : undefined,
+      pdfHeight: Number.isFinite(newPdfHeight) && newPdfHeight > 0 ? newPdfHeight : undefined
+    })
+  }
+
+  const applyImageResizeFrame = () => {
+    const rs = imageResizeRef.current
+    if (!rs) return
+    const el = imageBoxElementsRef.current.get(rs.id)
+    if (!el) return
+
+    const minSize = 50
+
+    const deltaX = rs.lastClientX - rs.startX
+    const deltaY = rs.lastClientY - rs.startY
+
+    let nextWidth
+    let nextHeight
+    if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+      nextWidth = rs.startWidth + deltaX
+      nextWidth = Math.max(minSize, nextWidth)
+      nextHeight = nextWidth / rs.ratio
+      if (nextHeight < minSize) {
+        nextHeight = minSize
+        nextWidth = nextHeight * rs.ratio
+      }
+    } else {
+      nextHeight = rs.startHeight + deltaY
+      nextHeight = Math.max(minSize, nextHeight)
+      nextWidth = nextHeight * rs.ratio
+      if (nextWidth < minSize) {
+        nextWidth = minSize
+        nextHeight = nextWidth / rs.ratio
+      }
+    }
+
+    el.style.width = `${nextWidth}px`
+    el.style.height = `${nextHeight}px`
+    rs.lastWidth = nextWidth
+    rs.lastHeight = nextHeight
+  }
+
+  const startImageResize = (e, imgBox) => {
+    if (e.button !== undefined && e.button !== 0) return
+    if (!e.isPrimary) return
+
+    e.preventDefault()
+    e.stopPropagation()
+
+    const ratio = (imgBox.width && imgBox.height) ? (imgBox.width / imgBox.height) : 1
+
+    imageResizeRef.current = {
+      id: imgBox.id,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startWidth: imgBox.width,
+      startHeight: imgBox.height,
+      ratio: ratio || 1,
+      lastClientX: e.clientX,
+      lastClientY: e.clientY,
+      lastWidth: imgBox.width,
+      lastHeight: imgBox.height
+    }
+
+    document.body.style.userSelect = 'none'
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const moveImageResize = (e) => {
+    const rs = imageResizeRef.current
+    if (!rs) return
+    if (!e.isPrimary || rs.pointerId !== e.pointerId) return
+
+    rs.lastClientX = e.clientX
+    rs.lastClientY = e.clientY
+    applyImageResizeFrame()
+  }
+
+  const endImageResize = (e) => {
+    const rs = imageResizeRef.current
+    if (!rs) return
+    if (!e.isPrimary || rs.pointerId !== e.pointerId) return
+
+    applyImageResizeFrame()
+    document.body.style.userSelect = ''
+    imageResizeRef.current = null
+
+    const scales = getCanvasPdfScales()
+    const current = imageBoxes.find(b => b.id === rs.id)
+
+    let nextPdfX
+    let nextPdfY
+    let nextPdfWidth
+    let nextPdfHeight
+    if (scales && current) {
+      nextPdfX = current.displayX * scales.pdfScaleX
+      nextPdfY = current.displayY * scales.pdfScaleY
+      nextPdfWidth = rs.lastWidth * scales.pdfScaleX
+      nextPdfHeight = rs.lastHeight * scales.pdfScaleY
+    }
+
+    onUpdateImageBox(rs.id, {
+      width: rs.lastWidth,
+      height: rs.lastHeight,
+      ...(Number.isFinite(nextPdfX) ? { pdfX: nextPdfX } : {}),
+      ...(Number.isFinite(nextPdfY) ? { pdfY: nextPdfY } : {}),
+      ...(Number.isFinite(nextPdfWidth) ? { pdfWidth: nextPdfWidth } : {}),
+      ...(Number.isFinite(nextPdfHeight) ? { pdfHeight: nextPdfHeight } : {})
+    })
+  }
+
+  const applyRectDragFrame = () => {
+    const drag = rectDragRef.current
+    if (!drag) return
+
+    const canvas = canvasRef.current
+    const el = rectBoxElementsRef.current.get(drag.id)
+    if (!canvas || !el) return
+
+    const rect = canvas.getBoundingClientRect()
+    let newDisplayX = drag.lastClientX - rect.left - drag.offsetX
+    let newDisplayY = drag.lastClientY - rect.top - drag.offsetY
+
+    newDisplayX = Math.max(0, Math.min(newDisplayX, rect.width - 10))
+    newDisplayY = Math.max(0, Math.min(newDisplayY, rect.height - 10))
+
+    el.style.left = `${newDisplayX}px`
+    el.style.top = `${newDisplayY}px`
+
+    drag.lastDisplayX = newDisplayX
+    drag.lastDisplayY = newDisplayY
+  }
+
+  const startRectBoxDrag = (e, box) => {
+    if (!canvasRef.current) return
+    if (e.button !== undefined && e.button !== 0) return
+    if (!e.isPrimary) return
+
+    e.preventDefault()
+
+    const canvasRect = canvasRef.current.getBoundingClientRect()
+    const offsetX = (e.clientX - canvasRect.left) - box.displayX
+    const offsetY = (e.clientY - canvasRect.top) - box.displayY
+
+    rectDragRef.current = {
+      id: box.id,
+      pointerId: e.pointerId,
+      offsetX,
+      offsetY,
+      lastClientX: e.clientX,
+      lastClientY: e.clientY,
+      lastDisplayX: box.displayX,
+      lastDisplayY: box.displayY,
+      width: box.width,
+      height: box.height
+    }
+
+    setDraggingRectBoxId(box.id)
+    document.body.style.userSelect = 'none'
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const moveRectBoxDrag = (e) => {
+    const drag = rectDragRef.current
+    if (!drag) return
+    if (!e.isPrimary || drag.pointerId !== e.pointerId) return
+
+    drag.lastClientX = e.clientX
+    drag.lastClientY = e.clientY
+    applyRectDragFrame()
+  }
+
+  const endRectBoxDrag = (e) => {
+    const drag = rectDragRef.current
+    if (!drag) return
+    if (!e.isPrimary || drag.pointerId !== e.pointerId) return
+
+    applyRectDragFrame()
+    document.body.style.userSelect = ''
+    setDraggingRectBoxId(null)
+    rectDragRef.current = null
+
+    const scales = getCanvasPdfScales()
+    if (!scales) return
+
+    const pdfX = drag.lastDisplayX * scales.pdfScaleX
+    const pdfY = drag.lastDisplayY * scales.pdfScaleY
+    const pdfWidth = (drag.width ?? 0) * scales.pdfScaleX
+    const pdfHeight = (drag.height ?? 0) * scales.pdfScaleY
+    const pdfScaleFactor = (scales.pdfScaleX + scales.pdfScaleY) / 2
+
+    onUpdateRectangleBox(drag.id, {
+      displayX: drag.lastDisplayX,
+      displayY: drag.lastDisplayY,
+      pdfX,
+      pdfY,
+      ...(Number.isFinite(pdfWidth) && pdfWidth > 0 ? { pdfWidth } : {}),
+      ...(Number.isFinite(pdfHeight) && pdfHeight > 0 ? { pdfHeight } : {}),
+      ...(Number.isFinite(pdfScaleFactor) ? { pdfScaleFactor } : {})
+    })
+  }
+
+  const applyRectResizeFrame = () => {
+    const rs = rectResizeRef.current
+    if (!rs) return
+    const el = rectBoxElementsRef.current.get(rs.id)
+    if (!el) return
+
+    const minSize = 10
+    const deltaX = rs.lastClientX - rs.startX
+    const deltaY = rs.lastClientY - rs.startY
+
+    const nextWidth = Math.max(minSize, rs.startWidth + deltaX)
+    const nextHeight = Math.max(minSize, rs.startHeight + deltaY)
+
+    el.style.width = `${nextWidth}px`
+    el.style.height = `${nextHeight}px`
+    rs.lastWidth = nextWidth
+    rs.lastHeight = nextHeight
+  }
+
+  const startRectResize = (e, box) => {
+    if (e.button !== undefined && e.button !== 0) return
+    if (!e.isPrimary) return
+
+    e.preventDefault()
+    e.stopPropagation()
+
+    rectResizeRef.current = {
+      id: box.id,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startWidth: box.width,
+      startHeight: box.height,
+      lastClientX: e.clientX,
+      lastClientY: e.clientY,
+      lastWidth: box.width,
+      lastHeight: box.height
+    }
+
+    document.body.style.userSelect = 'none'
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const moveRectResize = (e) => {
+    const rs = rectResizeRef.current
+    if (!rs) return
+    if (!e.isPrimary || rs.pointerId !== e.pointerId) return
+
+    rs.lastClientX = e.clientX
+    rs.lastClientY = e.clientY
+    applyRectResizeFrame()
+  }
+
+  const endRectResize = (e) => {
+    const rs = rectResizeRef.current
+    if (!rs) return
+    if (!e.isPrimary || rs.pointerId !== e.pointerId) return
+
+    applyRectResizeFrame()
+    document.body.style.userSelect = ''
+    rectResizeRef.current = null
+
+    const scales = getCanvasPdfScales()
+    const current = rectangleBoxes?.find?.(b => b.id === rs.id)
+    const pdfScaleFactor = scales ? (scales.pdfScaleX + scales.pdfScaleY) / 2 : undefined
+
+    let nextPdfX
+    let nextPdfY
+    let nextPdfWidth
+    let nextPdfHeight
+    if (scales && current) {
+      nextPdfX = current.displayX * scales.pdfScaleX
+      nextPdfY = current.displayY * scales.pdfScaleY
+      nextPdfWidth = rs.lastWidth * scales.pdfScaleX
+      nextPdfHeight = rs.lastHeight * scales.pdfScaleY
+    }
+
+    onUpdateRectangleBox(rs.id, {
+      width: rs.lastWidth,
+      height: rs.lastHeight,
+      ...(Number.isFinite(nextPdfX) ? { pdfX: nextPdfX } : {}),
+      ...(Number.isFinite(nextPdfY) ? { pdfY: nextPdfY } : {}),
+      ...(Number.isFinite(nextPdfWidth) ? { pdfWidth: nextPdfWidth } : {}),
+      ...(Number.isFinite(nextPdfHeight) ? { pdfHeight: nextPdfHeight } : {}),
+      ...(Number.isFinite(pdfScaleFactor) ? { pdfScaleFactor } : {})
+    })
+  }
+
+  const applyCircleDragFrame = () => {
+    const drag = circleDragRef.current
+    if (!drag) return
+
+    const canvas = canvasRef.current
+    const el = circleBoxElementsRef.current.get(drag.id)
+    if (!canvas || !el) return
+
+    const rect = canvas.getBoundingClientRect()
+    let newDisplayX = drag.lastClientX - rect.left - drag.offsetX
+    let newDisplayY = drag.lastClientY - rect.top - drag.offsetY
+
+    newDisplayX = Math.max(0, Math.min(newDisplayX, rect.width - 10))
+    newDisplayY = Math.max(0, Math.min(newDisplayY, rect.height - 10))
+
+    el.style.left = `${newDisplayX}px`
+    el.style.top = `${newDisplayY}px`
+
+    drag.lastDisplayX = newDisplayX
+    drag.lastDisplayY = newDisplayY
+  }
+
+  const startCircleBoxDrag = (e, box) => {
+    if (!canvasRef.current) return
+    if (e.button !== undefined && e.button !== 0) return
+    if (!e.isPrimary) return
+
+    e.preventDefault()
+
+    const canvasRect = canvasRef.current.getBoundingClientRect()
+    const offsetX = (e.clientX - canvasRect.left) - box.displayX
+    const offsetY = (e.clientY - canvasRect.top) - box.displayY
+
+    circleDragRef.current = {
+      id: box.id,
+      pointerId: e.pointerId,
+      offsetX,
+      offsetY,
+      lastClientX: e.clientX,
+      lastClientY: e.clientY,
+      lastDisplayX: box.displayX,
+      lastDisplayY: box.displayY,
+      width: box.width,
+      height: box.height
+    }
+
+    setDraggingCircleBoxId(box.id)
+    document.body.style.userSelect = 'none'
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const moveCircleBoxDrag = (e) => {
+    const drag = circleDragRef.current
+    if (!drag) return
+    if (!e.isPrimary || drag.pointerId !== e.pointerId) return
+
+    drag.lastClientX = e.clientX
+    drag.lastClientY = e.clientY
+    applyCircleDragFrame()
+  }
+
+  const endCircleBoxDrag = (e) => {
+    const drag = circleDragRef.current
+    if (!drag) return
+    if (!e.isPrimary || drag.pointerId !== e.pointerId) return
+
+    applyCircleDragFrame()
+    document.body.style.userSelect = ''
+    setDraggingCircleBoxId(null)
+    circleDragRef.current = null
+
+    const scales = getCanvasPdfScales()
+    if (!scales) return
+
+    const pdfX = drag.lastDisplayX * scales.pdfScaleX
+    const pdfY = drag.lastDisplayY * scales.pdfScaleY
+    const pdfWidth = (drag.width ?? 0) * scales.pdfScaleX
+    const pdfHeight = (drag.height ?? 0) * scales.pdfScaleY
+    const pdfScaleFactor = (scales.pdfScaleX + scales.pdfScaleY) / 2
+
+    onUpdateCircleBox(drag.id, {
+      displayX: drag.lastDisplayX,
+      displayY: drag.lastDisplayY,
+      pdfX,
+      pdfY,
+      ...(Number.isFinite(pdfWidth) && pdfWidth > 0 ? { pdfWidth } : {}),
+      ...(Number.isFinite(pdfHeight) && pdfHeight > 0 ? { pdfHeight } : {}),
+      ...(Number.isFinite(pdfScaleFactor) ? { pdfScaleFactor } : {})
+    })
+  }
+
+  const applyCircleResizeFrame = () => {
+    const rs = circleResizeRef.current
+    if (!rs) return
+    const el = circleBoxElementsRef.current.get(rs.id)
+    if (!el) return
+
+    const minSize = 10
+    const deltaX = rs.lastClientX - rs.startX
+    const deltaY = rs.lastClientY - rs.startY
+    const rawWidth = rs.startWidth + deltaX
+    const rawHeight = rs.startHeight + deltaY
+    const nextSide = Math.max(minSize, Math.min(rawWidth, rawHeight))
+
+    el.style.width = `${nextSide}px`
+    el.style.height = `${nextSide}px`
+    rs.lastWidth = nextSide
+    rs.lastHeight = nextSide
+  }
+
+  const startCircleResize = (e, box) => {
+    if (e.button !== undefined && e.button !== 0) return
+    if (!e.isPrimary) return
+
+    e.preventDefault()
+    e.stopPropagation()
+
+    circleResizeRef.current = {
+      id: box.id,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startWidth: box.width,
+      startHeight: box.height,
+      lastClientX: e.clientX,
+      lastClientY: e.clientY,
+      lastWidth: box.width,
+      lastHeight: box.height
+    }
+
+    document.body.style.userSelect = 'none'
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const moveCircleResize = (e) => {
+    const rs = circleResizeRef.current
+    if (!rs) return
+    if (!e.isPrimary || rs.pointerId !== e.pointerId) return
+
+    rs.lastClientX = e.clientX
+    rs.lastClientY = e.clientY
+    applyCircleResizeFrame()
+  }
+
+  const endCircleResize = (e) => {
+    const rs = circleResizeRef.current
+    if (!rs) return
+    if (!e.isPrimary || rs.pointerId !== e.pointerId) return
+
+    applyCircleResizeFrame()
+    document.body.style.userSelect = ''
+    circleResizeRef.current = null
+
+    const scales = getCanvasPdfScales()
+    const current = (circleBoxes || []).find(b => b.id === rs.id)
+    const pdfScaleFactor = scales ? (scales.pdfScaleX + scales.pdfScaleY) / 2 : undefined
+
+    let nextPdfX
+    let nextPdfY
+    let nextPdfWidth
+    let nextPdfHeight
+    if (scales && current) {
+      nextPdfX = current.displayX * scales.pdfScaleX
+      nextPdfY = current.displayY * scales.pdfScaleY
+      const pdfW = rs.lastWidth * scales.pdfScaleX
+      const pdfH = rs.lastHeight * scales.pdfScaleY
+      const pdfSide = Math.min(pdfW, pdfH)
+      nextPdfWidth = pdfSide
+      nextPdfHeight = pdfSide
+    }
+
+    onUpdateCircleBox(rs.id, {
+      width: rs.lastWidth,
+      height: rs.lastHeight,
+      ...(Number.isFinite(nextPdfX) ? { pdfX: nextPdfX } : {}),
+      ...(Number.isFinite(nextPdfY) ? { pdfY: nextPdfY } : {}),
+      ...(Number.isFinite(nextPdfWidth) ? { pdfWidth: nextPdfWidth } : {}),
+      ...(Number.isFinite(nextPdfHeight) ? { pdfHeight: nextPdfHeight } : {}),
+      ...(Number.isFinite(pdfScaleFactor) ? { pdfScaleFactor } : {})
+    })
+  }
+
+  const applyLineDragFrame = () => {
+    const drag = lineDragRef.current
+    if (!drag) return
+
+    const canvas = canvasRef.current
+    const el = lineBoxElementsRef.current.get(drag.id)
+    if (!canvas || !el) return
+
+    const rect = canvas.getBoundingClientRect()
+    let newDisplayX = drag.lastClientX - rect.left - drag.offsetX
+    let newDisplayY = drag.lastClientY - rect.top - drag.offsetY
+
+    newDisplayX = Math.max(0, Math.min(newDisplayX, rect.width - 10))
+    newDisplayY = Math.max(0, Math.min(newDisplayY, rect.height - 10))
+
+    el.style.left = `${newDisplayX}px`
+    el.style.top = `${newDisplayY}px`
+
+    drag.lastDisplayX = newDisplayX
+    drag.lastDisplayY = newDisplayY
+  }
+
+  const startLineBoxDrag = (e, box) => {
+    if (!canvasRef.current) return
+    if (e.button !== undefined && e.button !== 0) return
+    if (!e.isPrimary) return
+
+    e.preventDefault()
+
+    const canvasRect = canvasRef.current.getBoundingClientRect()
+    const offsetX = (e.clientX - canvasRect.left) - box.displayX
+    const offsetY = (e.clientY - canvasRect.top) - box.displayY
+
+    lineDragRef.current = {
+      id: box.id,
+      pointerId: e.pointerId,
+      offsetX,
+      offsetY,
+      lastClientX: e.clientX,
+      lastClientY: e.clientY,
+      lastDisplayX: box.displayX,
+      lastDisplayY: box.displayY,
+      width: box.width,
+      height: box.height
+    }
+
+    setDraggingLineBoxId(box.id)
+    document.body.style.userSelect = 'none'
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const moveLineBoxDrag = (e) => {
+    const drag = lineDragRef.current
+    if (!drag) return
+    if (!e.isPrimary || drag.pointerId !== e.pointerId) return
+
+    drag.lastClientX = e.clientX
+    drag.lastClientY = e.clientY
+    applyLineDragFrame()
+  }
+
+  const endLineBoxDrag = (e) => {
+    const drag = lineDragRef.current
+    if (!drag) return
+    if (!e.isPrimary || drag.pointerId !== e.pointerId) return
+
+    applyLineDragFrame()
+    document.body.style.userSelect = ''
+    setDraggingLineBoxId(null)
+    lineDragRef.current = null
+
+    const scales = getCanvasPdfScales()
+    if (!scales) return
+
+    const pdfX = drag.lastDisplayX * scales.pdfScaleX
+    const pdfY = drag.lastDisplayY * scales.pdfScaleY
+    const pdfWidth = (drag.width ?? 0) * scales.pdfScaleX
+    const pdfHeight = (drag.height ?? 0) * scales.pdfScaleY
+    const pdfScaleFactor = (scales.pdfScaleX + scales.pdfScaleY) / 2
+
+    onUpdateLineBox(drag.id, {
+      displayX: drag.lastDisplayX,
+      displayY: drag.lastDisplayY,
+      pdfX,
+      pdfY,
+      ...(Number.isFinite(pdfWidth) && pdfWidth > 0 ? { pdfWidth } : {}),
+      ...(Number.isFinite(pdfHeight) && pdfHeight > 0 ? { pdfHeight } : {}),
+      ...(Number.isFinite(pdfScaleFactor) ? { pdfScaleFactor } : {})
+    })
+  }
+
+  const applyLineResizeFrame = () => {
+    const rs = lineResizeRef.current
+    if (!rs) return
+    const el = lineBoxElementsRef.current.get(rs.id)
+    if (!el) return
+
+    const minSize = 10
+    const deltaX = rs.lastClientX - rs.startX
+    const deltaY = rs.lastClientY - rs.startY
+    const nextWidth = Math.max(minSize, rs.startWidth + deltaX)
+    const nextHeight = Math.max(minSize, rs.startHeight + deltaY)
+
+    el.style.width = `${nextWidth}px`
+    el.style.height = `${nextHeight}px`
+    rs.lastWidth = nextWidth
+    rs.lastHeight = nextHeight
+  }
+
+  const startLineResize = (e, box) => {
+    if (e.button !== undefined && e.button !== 0) return
+    if (!e.isPrimary) return
+
+    e.preventDefault()
+    e.stopPropagation()
+
+    lineResizeRef.current = {
+      id: box.id,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startWidth: box.width,
+      startHeight: box.height,
+      lastClientX: e.clientX,
+      lastClientY: e.clientY,
+      lastWidth: box.width,
+      lastHeight: box.height
+    }
+
+    document.body.style.userSelect = 'none'
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const moveLineResize = (e) => {
+    const rs = lineResizeRef.current
+    if (!rs) return
+    if (!e.isPrimary || rs.pointerId !== e.pointerId) return
+
+    rs.lastClientX = e.clientX
+    rs.lastClientY = e.clientY
+    applyLineResizeFrame()
+  }
+
+  const endLineResize = (e) => {
+    const rs = lineResizeRef.current
+    if (!rs) return
+    if (!e.isPrimary || rs.pointerId !== e.pointerId) return
+
+    applyLineResizeFrame()
+    document.body.style.userSelect = ''
+    lineResizeRef.current = null
+
+    const scales = getCanvasPdfScales()
+    const current = (lineBoxes || []).find(b => b.id === rs.id)
+    const pdfScaleFactor = scales ? (scales.pdfScaleX + scales.pdfScaleY) / 2 : undefined
+
+    let nextPdfX
+    let nextPdfY
+    let nextPdfWidth
+    let nextPdfHeight
+    if (scales && current) {
+      nextPdfX = current.displayX * scales.pdfScaleX
+      nextPdfY = current.displayY * scales.pdfScaleY
+      nextPdfWidth = rs.lastWidth * scales.pdfScaleX
+      nextPdfHeight = rs.lastHeight * scales.pdfScaleY
+    }
+
+    onUpdateLineBox(rs.id, {
+      width: rs.lastWidth,
+      height: rs.lastHeight,
+      ...(Number.isFinite(nextPdfX) ? { pdfX: nextPdfX } : {}),
+      ...(Number.isFinite(nextPdfY) ? { pdfY: nextPdfY } : {}),
+      ...(Number.isFinite(nextPdfWidth) ? { pdfWidth: nextPdfWidth } : {}),
+      ...(Number.isFinite(nextPdfHeight) ? { pdfHeight: nextPdfHeight } : {}),
+      ...(Number.isFinite(pdfScaleFactor) ? { pdfScaleFactor } : {})
+    })
+  }
+
+  // Ensure newly uploaded images (default position/size) have correct PDF-unit geometry
+  useEffect(() => {
+    if (!pdfDocument) return
+    if (!imageBoxes || imageBoxes.length === 0) return
+
+    const scales = getCanvasPdfScales()
+    if (!scales) return
+
+    const toSync = imageBoxes.filter(b => b.page === currentPage)
+    for (const b of toSync) {
+      if (
+        typeof b.pdfWidth === 'number' && Number.isFinite(b.pdfWidth) &&
+        typeof b.pdfHeight === 'number' && Number.isFinite(b.pdfHeight) &&
+        typeof b.pdfX === 'number' && Number.isFinite(b.pdfX) &&
+        typeof b.pdfY === 'number' && Number.isFinite(b.pdfY)
+      ) {
+        continue
+      }
+
+      const pdfX = b.displayX * scales.pdfScaleX
+      const pdfY = b.displayY * scales.pdfScaleY
+      const pdfWidth = b.width * scales.pdfScaleX
+      const pdfHeight = b.height * scales.pdfScaleY
+
+      onUpdateImageBox(b.id, {
+        pdfX,
+        pdfY,
+        pdfWidth,
+        pdfHeight
+      })
+    }
+  }, [pdfDocument, currentPage, imageBoxes])
+
   useEffect(() => {
     if (pdfFile) {
       // Clean up old document before loading new one
@@ -261,31 +1079,7 @@ function PDFViewer({
     return () => document.removeEventListener('mouseup', handleSelection)
   }, [editMode, pdfDocument, currentPage])
 
-  // Handle image resize
-  useEffect(() => {
-    if (!resizingImage) return
-
-    const handleMouseMove = (e) => {
-      const deltaX = e.clientX - resizingImage.startX
-      const deltaY = e.clientY - resizingImage.startY
-      const newWidth = Math.max(50, resizingImage.startWidth + deltaX)
-      const newHeight = Math.max(50, resizingImage.startHeight + deltaY)
-      
-      onUpdateImageBox(resizingImage.id, { width: newWidth, height: newHeight })
-    }
-
-    const handleMouseUp = () => {
-      setResizingImage(null)
-    }
-
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [resizingImage])
+  // Image resize is handled via pointer capture on the resize handle.
 
   const loadPDF = async () => {
     try {
@@ -427,16 +1221,73 @@ function PDFViewer({
     const width = pdfX2 - pdfX1
     const height = pdfY2 - pdfY1
 
-    // Require minimum drag size for shapes
-    if (width > 10 && height > 10) {
-      if (editMode === 'rectangle') {
-        onAddRectangle(pdfX1, pdfY1, width, height)
-      } else if (editMode === 'circle') {
-        onAddCircle(pdfX1, pdfY1, width, height)
-      } else if (editMode === 'line') {
-        onAddLine(pdfX1, pdfY1, width, height)
-      } else if (editMode === 'highlight') {
+    const dx = dragEnd.x - dragStart.x
+    const dy = dragEnd.y - dragStart.y
+
+    const displayX1 = Math.min(dragStart.x, dragEnd.x)
+    const displayY1 = Math.min(dragStart.y, dragEnd.y)
+    const displayW = Math.abs(dx)
+    const displayH = Math.abs(dy)
+
+    const pdfScaleX = scaleX / scale
+    const pdfScaleY = scaleY / scale
+    const pdfScaleFactor = (pdfScaleX + pdfScaleY) / 2
+
+    if (editMode === 'line') {
+      const displayLen = Math.hypot(dx, dy)
+      if (displayLen > 10) {
+        onAddLine({
+          x1: dragStart.x,
+          y1: dragStart.y,
+          x2: dragEnd.x,
+          y2: dragEnd.y,
+          pdfX1: dragStart.x * pdfScaleX,
+          pdfY1: dragStart.y * pdfScaleY,
+          pdfX2: dragEnd.x * pdfScaleX,
+          pdfY2: dragEnd.y * pdfScaleY,
+          pdfScaleFactor
+        })
+      }
+    } else {
+      // Require minimum drag size for box-shaped tools
+      if (width > 10 && height > 10) {
+        if (editMode === 'rectangle') {
+        onAddRectangle({
+          displayX: displayX1,
+          displayY: displayY1,
+          width: displayW,
+          height: displayH,
+          pdfX: pdfX1,
+          pdfY: pdfY1,
+          pdfWidth: width,
+          pdfHeight: height,
+          pdfScaleFactor
+        })
+        } else if (editMode === 'circle') {
+        // Force perfect circle: keep 1:1 using the smaller side.
+        const displaySide = Math.min(displayW, displayH)
+        const pdfSide = Math.min(displaySide * pdfScaleX, displaySide * pdfScaleY)
+
+        const circleDisplayX = dx >= 0 ? dragStart.x : (dragStart.x - displaySide)
+        const circleDisplayY = dy >= 0 ? dragStart.y : (dragStart.y - displaySide)
+
+        const circlePdfX = circleDisplayX * pdfScaleX
+        const circlePdfY = circleDisplayY * pdfScaleY
+
+        onAddCircle({
+          displayX: circleDisplayX,
+          displayY: circleDisplayY,
+          width: displaySide,
+          height: displaySide,
+          pdfX: circlePdfX,
+          pdfY: circlePdfY,
+          pdfWidth: pdfSide,
+          pdfHeight: pdfSide,
+          pdfScaleFactor
+        })
+        } else if (editMode === 'highlight') {
         onAddHighlight(pdfX1, pdfY1, width, height)
+        }
       }
     }
 
@@ -462,6 +1313,18 @@ function PDFViewer({
   const getDragRect = () => {
     if (!isDragging || !dragStart || !dragEnd) return null
 
+    if (editMode === 'circle') {
+      const dx = dragEnd.x - dragStart.x
+      const dy = dragEnd.y - dragStart.y
+      const side = Math.min(Math.abs(dx), Math.abs(dy))
+      return {
+        left: dx >= 0 ? dragStart.x : (dragStart.x - side),
+        top: dy >= 0 ? dragStart.y : (dragStart.y - side),
+        width: side,
+        height: side
+      }
+    }
+
     return {
       left: Math.min(dragStart.x, dragEnd.x),
       top: Math.min(dragStart.y, dragEnd.y),
@@ -472,6 +1335,127 @@ function PDFViewer({
 
   const dragRect = getDragRect()
 
+  const getLineDisplayEndpoints = (box) => {
+    if (!box) return null
+
+    if (
+      typeof box.x1 === 'number' && typeof box.y1 === 'number' &&
+      typeof box.x2 === 'number' && typeof box.y2 === 'number'
+    ) {
+      return { x1: box.x1, y1: box.y1, x2: box.x2, y2: box.y2 }
+    }
+
+    // Back-compat: older boxes stored as bounding rect + direction flags
+    if (
+      typeof box.displayX === 'number' && typeof box.displayY === 'number' &&
+      typeof box.width === 'number' && typeof box.height === 'number'
+    ) {
+      const left = box.displayX
+      const top = box.displayY
+      const right = box.displayX + box.width
+      const bottom = box.displayY + box.height
+
+      const startOnRight = !!box.startOnRight
+      const startOnBottom = !!box.startOnBottom
+
+      const x1 = startOnRight ? right : left
+      const y1 = startOnBottom ? bottom : top
+      const x2 = startOnRight ? left : right
+      const y2 = startOnBottom ? top : bottom
+      return { x1, y1, x2, y2 }
+    }
+
+    return null
+  }
+
+  const startLineDrag = (e, box) => {
+    if (!box || !e.isPrimary) return
+    if (e.button !== undefined && e.button !== 0) return
+
+    const endpoints = getLineDisplayEndpoints(box)
+    if (!endpoints) return
+
+    e.preventDefault()
+    e.stopPropagation()
+
+    if (setSelectedTextId) setSelectedTextId(null)
+    if (setSelectedRectangleId) setSelectedRectangleId(null)
+    if (setSelectedCircleId) setSelectedCircleId(null)
+    if (setSelectedLineId) setSelectedLineId(box.id)
+
+    setDraggingLineBoxId(box.id)
+
+    lineEndpointDragRef.current = {
+      id: box.id,
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startX1: endpoints.x1,
+      startY1: endpoints.y1,
+      startX2: endpoints.x2,
+      startY2: endpoints.y2,
+      lastDx: 0,
+      lastDy: 0
+    }
+
+    document.body.style.userSelect = 'none'
+    if (linesSvgRef.current) {
+      linesSvgRef.current.setPointerCapture(e.pointerId)
+    }
+  }
+
+  const moveLineDrag = (e) => {
+    const drag = lineEndpointDragRef.current
+    if (!drag) return
+    if (!e.isPrimary || drag.pointerId !== e.pointerId) return
+
+    const dx = e.clientX - drag.startClientX
+    const dy = e.clientY - drag.startClientY
+    drag.lastDx = dx
+    drag.lastDy = dy
+
+    if (onUpdateLineBox) {
+      onUpdateLineBox(drag.id, {
+        x1: drag.startX1 + dx,
+        y1: drag.startY1 + dy,
+        x2: drag.startX2 + dx,
+        y2: drag.startY2 + dy
+      })
+    }
+  }
+
+  const endLineDrag = (e) => {
+    const drag = lineEndpointDragRef.current
+    if (!drag) return
+    if (!e.isPrimary || drag.pointerId !== e.pointerId) return
+
+    document.body.style.userSelect = ''
+    lineEndpointDragRef.current = null
+    setDraggingLineBoxId(null)
+
+    const scales = getCanvasPdfScales()
+    if (!scales || !onUpdateLineBox) return
+
+    const finalX1 = drag.startX1 + drag.lastDx
+    const finalY1 = drag.startY1 + drag.lastDy
+    const finalX2 = drag.startX2 + drag.lastDx
+    const finalY2 = drag.startY2 + drag.lastDy
+
+    const pdfScaleFactor = (scales.pdfScaleX + scales.pdfScaleY) / 2
+
+    onUpdateLineBox(drag.id, {
+      x1: finalX1,
+      y1: finalY1,
+      x2: finalX2,
+      y2: finalY2,
+      pdfX1: finalX1 * scales.pdfScaleX,
+      pdfY1: finalY1 * scales.pdfScaleY,
+      pdfX2: finalX2 * scales.pdfScaleX,
+      pdfY2: finalY2 * scales.pdfScaleY,
+      ...(Number.isFinite(pdfScaleFactor) ? { pdfScaleFactor } : {})
+    })
+  }
+
   return (
     <div className="pdf-viewer">
       <div
@@ -481,8 +1465,18 @@ function PDFViewer({
           // Deselect text box when clicking anywhere outside a text box
           // (capture phase ensures this runs even if child stops propagation)
           const targetEl = e.target instanceof Element ? e.target : e.target?.parentElement
-          if (targetEl && targetEl.closest && targetEl.closest('.text-box')) return
+          if (targetEl && targetEl.closest && (
+            targetEl.closest('.text-box') ||
+            targetEl.closest('.rect-box') ||
+            targetEl.closest('.circle-box') ||
+            targetEl.closest('.lines-overlay')
+          )) {
+            return
+          }
           setSelectedTextId(null)
+          if (setSelectedRectangleId) setSelectedRectangleId(null)
+          if (setSelectedCircleId) setSelectedCircleId(null)
+          if (setSelectedLineId) setSelectedLineId(null)
         }}
       >
         <canvas
@@ -621,38 +1615,31 @@ function PDFViewer({
         {imageBoxes.map(imgBox => (
           <div
             key={imgBox.id}
-            className="image-box"
+            className={`image-box ${draggingImageBoxId === imgBox.id ? 'dragging' : ''}`}
             style={{
               left: `${imgBox.displayX}px`,
               top: `${imgBox.displayY}px`,
               width: `${imgBox.width}px`,
               height: `${imgBox.height}px`
             }}
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.effectAllowed = 'move'
+            ref={(el) => {
+              if (!el) {
+                imageBoxElementsRef.current.delete(imgBox.id)
+                return
+              }
+              imageBoxElementsRef.current.set(imgBox.id, el)
             }}
-            onDragEnd={(e) => {
-              const canvas = canvasRef.current
-              const rect = canvas.getBoundingClientRect()
-              const newDisplayX = e.clientX - rect.left - imgBox.width / 2
-              const newDisplayY = e.clientY - rect.top - imgBox.height / 2
-              
-              // Convert to PDF coordinates
-              const scaleX = canvas.width / rect.width
-              const scaleY = canvas.height / rect.height
-              const canvasX = newDisplayX * scaleX
-              const canvasY = newDisplayY * scaleY
-              const newPdfX = canvasX / scale
-              const newPdfY = canvasY / scale
-              
-              onUpdateImageBox(imgBox.id, { 
-                displayX: newDisplayX, 
-                displayY: newDisplayY,
-                pdfX: newPdfX,
-                pdfY: newPdfY
-              })
+            onPointerDown={(e) => {
+              const targetEl = e.target instanceof Element ? e.target : e.target?.parentElement
+              if (targetEl?.closest?.('.image-box-delete')) return
+              if (targetEl?.closest?.('.resize-handle')) return
+
+              e.stopPropagation()
+              startImageBoxDrag(e, imgBox)
             }}
+            onPointerMove={moveImageBoxDrag}
+            onPointerUp={endImageBoxDrag}
+            onPointerCancel={endImageBoxDrag}
           >
             <img 
               src={imgBox.imageData} 
@@ -661,6 +1648,10 @@ function PDFViewer({
             />
             <button
               className="image-box-delete"
+              onPointerDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
               onClick={(e) => {
                 e.stopPropagation()
                 onRemoveImageBox(imgBox.id)
@@ -672,25 +1663,229 @@ function PDFViewer({
             {/* Resize handles */}
             <div
               className="resize-handle resize-se"
-              onMouseDown={(e) => {
-                e.stopPropagation()
-                e.preventDefault()
-                setResizingImage({ id: imgBox.id, startX: e.clientX, startY: e.clientY, startWidth: imgBox.width, startHeight: imgBox.height })
-              }}
+              onPointerDown={(e) => startImageResize(e, imgBox)}
+              onPointerMove={moveImageResize}
+              onPointerUp={endImageResize}
+              onPointerCancel={endImageResize}
               title="Drag to resize"
             />
           </div>
         ))}
-        {dragRect && (
+
+        {/* Editable rectangle boxes */}
+        {(rectangleBoxes || []).map(box => (
           <div
-            className={`drag-selection ${editMode}-drag`}
+            key={box.id}
+            className={`rect-box ${selectedRectangleId === box.id ? 'selected' : ''} ${draggingRectBoxId === box.id ? 'dragging' : ''}`}
             style={{
-              left: `${dragRect.left}px`,
-              top: `${dragRect.top}px`,
-              width: `${dragRect.width}px`,
-              height: `${dragRect.height}px`
+              left: `${box.displayX}px`,
+              top: `${box.displayY}px`,
+              width: `${box.width}px`,
+              height: `${box.height}px`,
+              border: `${box.strokeWidth ?? 2}px solid ${box.strokeColor ?? '#000000'}`,
+              background: box.filled ? (box.fillColor ?? '#000000') : 'transparent'
             }}
-          />
+            ref={(el) => {
+              if (!el) {
+                rectBoxElementsRef.current.delete(box.id)
+                return
+              }
+              rectBoxElementsRef.current.set(box.id, el)
+            }}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (setSelectedTextId) setSelectedTextId(null)
+              if (setSelectedRectangleId) setSelectedRectangleId(box.id)
+            }}
+            onPointerDown={(e) => {
+              const targetEl = e.target instanceof Element ? e.target : e.target?.parentElement
+              if (targetEl?.closest?.('.rect-box-delete')) return
+              if (targetEl?.closest?.('.resize-handle')) return
+
+              e.stopPropagation()
+              if (setSelectedTextId) setSelectedTextId(null)
+              if (setSelectedRectangleId) setSelectedRectangleId(box.id)
+              startRectBoxDrag(e, box)
+            }}
+            onPointerMove={moveRectBoxDrag}
+            onPointerUp={endRectBoxDrag}
+            onPointerCancel={endRectBoxDrag}
+            title="Rectangle"
+          >
+            <button
+              className="rect-box-delete"
+              onPointerDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (onRemoveRectangleBox) onRemoveRectangleBox(box.id)
+              }}
+              title="Remove rectangle"
+            >
+              ×
+            </button>
+            <div
+              className="resize-handle resize-se"
+              onPointerDown={(e) => startRectResize(e, box)}
+              onPointerMove={moveRectResize}
+              onPointerUp={endRectResize}
+              onPointerCancel={endRectResize}
+              title="Drag to resize"
+            />
+          </div>
+        ))}
+
+        {/* Editable circle/ellipse boxes */}
+        {(circleBoxes || []).map(box => (
+          <div
+            key={box.id}
+            className={`circle-box ${selectedCircleId === box.id ? 'selected' : ''} ${draggingCircleBoxId === box.id ? 'dragging' : ''}`}
+            style={{
+              left: `${box.displayX}px`,
+              top: `${box.displayY}px`,
+              width: `${box.width}px`,
+              height: `${box.height}px`,
+              border: `${box.strokeWidth ?? 2}px solid ${box.strokeColor ?? '#000000'}`,
+              background: box.filled ? (box.fillColor ?? '#000000') : 'transparent'
+            }}
+            ref={(el) => {
+              if (!el) {
+                circleBoxElementsRef.current.delete(box.id)
+                return
+              }
+              circleBoxElementsRef.current.set(box.id, el)
+            }}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (setSelectedTextId) setSelectedTextId(null)
+              if (setSelectedRectangleId) setSelectedRectangleId(null)
+              if (setSelectedLineId) setSelectedLineId(null)
+              if (setSelectedCircleId) setSelectedCircleId(box.id)
+            }}
+            onPointerDown={(e) => {
+              const targetEl = e.target instanceof Element ? e.target : e.target?.parentElement
+              if (targetEl?.closest?.('.circle-box-delete')) return
+              if (targetEl?.closest?.('.resize-handle')) return
+
+              e.stopPropagation()
+              if (setSelectedTextId) setSelectedTextId(null)
+              if (setSelectedRectangleId) setSelectedRectangleId(null)
+              if (setSelectedLineId) setSelectedLineId(null)
+              if (setSelectedCircleId) setSelectedCircleId(box.id)
+              startCircleBoxDrag(e, box)
+            }}
+            onPointerMove={moveCircleBoxDrag}
+            onPointerUp={endCircleBoxDrag}
+            onPointerCancel={endCircleBoxDrag}
+            title="Circle"
+          >
+            <button
+              className="circle-box-delete"
+              onPointerDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (onRemoveCircleBox) onRemoveCircleBox(box.id)
+              }}
+              title="Remove circle"
+            >
+              ×
+            </button>
+            <div
+              className="resize-handle resize-se"
+              onPointerDown={(e) => startCircleResize(e, box)}
+              onPointerMove={moveCircleResize}
+              onPointerUp={endCircleResize}
+              onPointerCancel={endCircleResize}
+              title="Drag to resize"
+            />
+          </div>
+        ))}
+
+        {/* Editable line boxes */}
+        {/* Editable lines (endpoint-based, not box-based) */}
+        <svg
+          ref={linesSvgRef}
+          className="lines-overlay"
+          width="100%"
+          height="100%"
+          style={{ pointerEvents: 'none' }}
+          onPointerMove={moveLineDrag}
+          onPointerUp={endLineDrag}
+          onPointerCancel={endLineDrag}
+        >
+          {(lineBoxes || []).map((box) => {
+            const endpoints = getLineDisplayEndpoints(box)
+            if (!endpoints) return null
+
+            const strokeWidth = box.strokeWidth ?? 2
+            const strokeColor = box.strokeColor ?? '#000000'
+
+            const hitWidth = Math.max(12, strokeWidth + 10)
+            const isSelected = selectedLineId === box.id
+
+            return (
+              <g key={box.id}>
+                {/* Invisible wide stroke for easy clicking/dragging */}
+                <line
+                  className={`line-hit ${isSelected ? 'selected' : ''} ${draggingLineBoxId === box.id ? 'dragging' : ''}`}
+                  x1={endpoints.x1}
+                  y1={endpoints.y1}
+                  x2={endpoints.x2}
+                  y2={endpoints.y2}
+                  stroke="transparent"
+                  strokeWidth={hitWidth}
+                  strokeLinecap="round"
+                  pointerEvents="stroke"
+                  onPointerDown={(e) => startLineDrag(e, box)}
+                />
+
+                {/* Visible line */}
+                <line
+                  x1={endpoints.x1}
+                  y1={endpoints.y1}
+                  x2={endpoints.x2}
+                  y2={endpoints.y2}
+                  stroke={strokeColor}
+                  strokeWidth={strokeWidth}
+                  strokeLinecap="round"
+                  pointerEvents="none"
+                  opacity={isSelected ? 0.9 : 1}
+                />
+
+              </g>
+            )
+          })}
+        </svg>
+        {editMode === 'line' && isDragging && dragStart && dragEnd ? (
+          <svg className="line-drag-preview" width="100%" height="100%">
+            <line
+              x1={dragStart.x}
+              y1={dragStart.y}
+              x2={dragEnd.x}
+              y2={dragEnd.y}
+              stroke="#8C8C9C"
+              strokeWidth="2"
+              strokeDasharray="6 4"
+              strokeLinecap="round"
+            />
+          </svg>
+        ) : (
+          dragRect && (
+            <div
+              className={`drag-selection ${editMode}-drag`}
+              style={{
+                left: `${dragRect.left}px`,
+                top: `${dragRect.top}px`,
+                width: `${dragRect.width}px`,
+                height: `${dragRect.height}px`
+              }}
+            />
+          )
         )}
       </div>
       {editMode && (

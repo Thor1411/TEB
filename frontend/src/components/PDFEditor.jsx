@@ -18,16 +18,29 @@ function PDFEditor() {
   const [textBoxes, setTextBoxes] = useState([]) // Active text boxes on canvas
   const [imageBoxes, setImageBoxes] = useState([]) // Active image boxes on canvas
   const [textSelections, setTextSelections] = useState([]) // Text selections for highlighting
+  const [rectangleBoxes, setRectangleBoxes] = useState([]) // Editable rectangle overlays
+  const [circleBoxes, setCircleBoxes] = useState([]) // Editable circle/ellipse overlays
+  const [lineBoxes, setLineBoxes] = useState([]) // Editable line overlays
   const [undoStack, setUndoStack] = useState([])
   const fileInputRef = useRef(null)
   const [selectedTextId, setSelectedTextId] = useState(null)
+  const [selectedRectangleId, setSelectedRectangleId] = useState(null)
+  const [selectedCircleId, setSelectedCircleId] = useState(null)
+  const [selectedLineId, setSelectedLineId] = useState(null)
   const imageInputRef = useRef(null)
   const [autoFocusTextBoxId, setAutoFocusTextBoxId] = useState(null)
   const fontBytesCacheRef = useRef(new Map())
 
-  // Deselect text box when clicking outside text boxes + toolbars
+  // Deselect overlays when clicking outside boxes + toolbars
   useEffect(() => {
-    if (selectedTextId == null) return
+    if (
+      selectedTextId == null &&
+      selectedRectangleId == null &&
+      selectedCircleId == null &&
+      selectedLineId == null
+    ) {
+      return
+    }
 
     const handleGlobalMouseDown = (e) => {
       const el = e.target instanceof Element ? e.target : e.target?.parentElement
@@ -36,6 +49,9 @@ function PDFEditor() {
       // Keep selection when interacting with text boxes or toolbars
       if (
         el.closest('.text-box') ||
+        el.closest('.rect-box') ||
+        el.closest('.circle-box') ||
+        el.closest('.line-box') ||
         el.closest('.secondary-toolbar') ||
         el.closest('.toolbar')
       ) {
@@ -43,11 +59,14 @@ function PDFEditor() {
       }
 
       setSelectedTextId(null)
+      setSelectedRectangleId(null)
+      setSelectedCircleId(null)
+      setSelectedLineId(null)
     }
 
     document.addEventListener('mousedown', handleGlobalMouseDown)
     return () => document.removeEventListener('mousedown', handleGlobalMouseDown)
-  }, [selectedTextId])
+  }, [selectedTextId, selectedRectangleId, selectedCircleId, selectedLineId])
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0]
@@ -62,7 +81,14 @@ function PDFEditor() {
       setTextBoxes([])
       setImageBoxes([])
       setTextSelections([])
+      setRectangleBoxes([])
+      setCircleBoxes([])
+      setLineBoxes([])
       setEditMode(null)
+      setSelectedTextId(null)
+      setSelectedRectangleId(null)
+      setSelectedCircleId(null)
+      setSelectedLineId(null)
     } else {
       alert('Please upload a valid PDF file')
     }
@@ -143,6 +169,8 @@ function PDFEditor() {
             displayY: 100,
             pdfX: 100, // PDF coordinates for embedding (will be adjusted)
             pdfY: 100,
+            pdfWidth: null,
+            pdfHeight: null,
             width: defaultWidth,
             height: defaultHeight,
             originalWidth: img.width,
@@ -609,12 +637,20 @@ function PDFEditor() {
           }
         }
 
-        const pdfY = pageHeight - imgBox.pdfY - imgBox.height
+        const pdfWidth = typeof imgBox.pdfWidth === 'number' && Number.isFinite(imgBox.pdfWidth)
+          ? imgBox.pdfWidth
+          : imgBox.width
+
+        const pdfHeight = typeof imgBox.pdfHeight === 'number' && Number.isFinite(imgBox.pdfHeight)
+          ? imgBox.pdfHeight
+          : imgBox.height
+
+        const pdfY = pageHeight - imgBox.pdfY - pdfHeight
         page.drawImage(pdfImage, {
           x: imgBox.pdfX,
           y: pdfY,
-          width: imgBox.width,
-          height: imgBox.height
+          width: pdfWidth,
+          height: pdfHeight
         })
       }
     }
@@ -651,6 +687,187 @@ function PDFEditor() {
           })
         })
       })
+    }
+  }
+
+  const applyRectangleBoxesToPdf = async (doc, boxesToApply) => {
+    if (!doc || !boxesToApply || boxesToApply.length === 0) return
+
+    const pages = doc.getPages()
+
+    const byPage = {}
+    boxesToApply.forEach(b => {
+      if (!byPage[b.page]) byPage[b.page] = []
+      byPage[b.page].push(b)
+    })
+
+    for (const [pageNum, boxes] of Object.entries(byPage)) {
+      const page = pages[parseInt(pageNum) - 1]
+      const { height: pageHeight } = page.getSize()
+
+      for (const box of boxes) {
+        const pdfWidth = typeof box.pdfWidth === 'number' && Number.isFinite(box.pdfWidth)
+          ? box.pdfWidth
+          : box.width
+        const pdfHeight = typeof box.pdfHeight === 'number' && Number.isFinite(box.pdfHeight)
+          ? box.pdfHeight
+          : box.height
+
+        const pdfY = pageHeight - box.pdfY - pdfHeight
+
+        const strokeColor = parseHexColorToRgb(box.strokeColor)
+        const fillColor = parseHexColorToRgb(box.fillColor)
+
+        const pdfScaleFactor = typeof box.pdfScaleFactor === 'number' && Number.isFinite(box.pdfScaleFactor)
+          ? box.pdfScaleFactor
+          : (1 / 1.5)
+
+        const strokeWidth = typeof box.strokeWidth === 'number' && Number.isFinite(box.strokeWidth)
+          ? box.strokeWidth
+          : 2
+
+        const borderWidth = Math.max(0.25, strokeWidth * pdfScaleFactor)
+
+        page.drawRectangle({
+          x: box.pdfX,
+          y: pdfY,
+          width: pdfWidth,
+          height: pdfHeight,
+          ...(box.filled ? { color: fillColor } : {}),
+          borderColor: strokeColor,
+          borderWidth
+        })
+      }
+    }
+  }
+
+  const applyCircleBoxesToPdf = async (doc, boxesToApply) => {
+    if (!doc || !boxesToApply || boxesToApply.length === 0) return
+
+    const pages = doc.getPages()
+
+    const byPage = {}
+    boxesToApply.forEach(b => {
+      if (!byPage[b.page]) byPage[b.page] = []
+      byPage[b.page].push(b)
+    })
+
+    for (const [pageNum, boxes] of Object.entries(byPage)) {
+      const page = pages[parseInt(pageNum) - 1]
+      const { height: pageHeight } = page.getSize()
+
+      for (const box of boxes) {
+        const pdfWidth = typeof box.pdfWidth === 'number' && Number.isFinite(box.pdfWidth)
+          ? box.pdfWidth
+          : box.width
+        const pdfHeight = typeof box.pdfHeight === 'number' && Number.isFinite(box.pdfHeight)
+          ? box.pdfHeight
+          : box.height
+
+        const centerX = box.pdfX + (pdfWidth / 2)
+        const centerY = pageHeight - box.pdfY - (pdfHeight / 2)
+
+        const strokeColor = parseHexColorToRgb(box.strokeColor)
+        const fillColor = parseHexColorToRgb(box.fillColor)
+
+        const pdfScaleFactor = typeof box.pdfScaleFactor === 'number' && Number.isFinite(box.pdfScaleFactor)
+          ? box.pdfScaleFactor
+          : (1 / 1.5)
+
+        const strokeWidth = typeof box.strokeWidth === 'number' && Number.isFinite(box.strokeWidth)
+          ? box.strokeWidth
+          : 2
+
+        const borderWidth = Math.max(0.25, strokeWidth * pdfScaleFactor)
+
+        page.drawEllipse({
+          x: centerX,
+          y: centerY,
+          xScale: pdfWidth / 2,
+          yScale: pdfHeight / 2,
+          ...(box.filled ? { color: fillColor } : {}),
+          borderColor: strokeColor,
+          borderWidth
+        })
+      }
+    }
+  }
+
+  const applyLineBoxesToPdf = async (doc, boxesToApply) => {
+    if (!doc || !boxesToApply || boxesToApply.length === 0) return
+
+    const pages = doc.getPages()
+
+    const byPage = {}
+    boxesToApply.forEach(b => {
+      if (!byPage[b.page]) byPage[b.page] = []
+      byPage[b.page].push(b)
+    })
+
+    for (const [pageNum, boxes] of Object.entries(byPage)) {
+      const page = pages[parseInt(pageNum) - 1]
+      const { height: pageHeight } = page.getSize()
+
+      for (const box of boxes) {
+        const strokeColor = parseHexColorToRgb(box.strokeColor)
+
+        const pdfScaleFactor = typeof box.pdfScaleFactor === 'number' && Number.isFinite(box.pdfScaleFactor)
+          ? box.pdfScaleFactor
+          : (1 / 1.5)
+
+        const strokeWidth = typeof box.strokeWidth === 'number' && Number.isFinite(box.strokeWidth)
+          ? box.strokeWidth
+          : 2
+
+        const thickness = Math.max(0.25, strokeWidth * pdfScaleFactor)
+
+        // New format: endpoints stored directly.
+        const hasEndpoints =
+          typeof box.pdfX1 === 'number' && Number.isFinite(box.pdfX1) &&
+          typeof box.pdfY1 === 'number' && Number.isFinite(box.pdfY1) &&
+          typeof box.pdfX2 === 'number' && Number.isFinite(box.pdfX2) &&
+          typeof box.pdfY2 === 'number' && Number.isFinite(box.pdfY2)
+
+        let start
+        let end
+        if (hasEndpoints) {
+          start = { x: box.pdfX1, y: pageHeight - box.pdfY1 }
+          end = { x: box.pdfX2, y: pageHeight - box.pdfY2 }
+        } else {
+          // Back-compat: older format stored as bounding rect + direction flags
+          const pdfWidth = typeof box.pdfWidth === 'number' && Number.isFinite(box.pdfWidth)
+            ? box.pdfWidth
+            : box.width
+          const pdfHeight = typeof box.pdfHeight === 'number' && Number.isFinite(box.pdfHeight)
+            ? box.pdfHeight
+            : box.height
+
+          const startOnRight = !!box.startOnRight
+          const startOnBottom = !!box.startOnBottom
+
+          const xLeft = box.pdfX
+          const xRight = box.pdfX + pdfWidth
+          const yTop = pageHeight - box.pdfY
+          const yBottom = pageHeight - box.pdfY - pdfHeight
+
+          start = {
+            x: startOnRight ? xRight : xLeft,
+            y: startOnBottom ? yBottom : yTop
+          }
+
+          end = {
+            x: startOnRight ? xLeft : xRight,
+            y: startOnBottom ? yTop : yBottom
+          }
+        }
+
+        page.drawLine({
+          start,
+          end,
+          thickness,
+          color: strokeColor
+        })
+      }
     }
   }
 
@@ -728,74 +945,160 @@ function PDFEditor() {
     }
   }
 
-  const handleAddRectangle = async (x, y, width, height) => {
-    if (!pdfDoc) return
+  const handleAddRectangle = (rect) => {
+    if (!rect) return
 
-    await saveToUndoStack()
+    const pdfScaleFactor = typeof rect.pdfScaleFactor === 'number' && Number.isFinite(rect.pdfScaleFactor)
+      ? rect.pdfScaleFactor
+      : (1 / 1.5)
 
-    const pages = pdfDoc.getPages()
-    const page = pages[currentPage - 1]
-    const { height: pageHeight } = page.getSize()
-    const pdfY = pageHeight - y - height
+    const newRect = {
+      id: Date.now(),
+      displayX: rect.displayX,
+      displayY: rect.displayY,
+      width: rect.width,
+      height: rect.height,
+      pdfX: rect.pdfX,
+      pdfY: rect.pdfY,
+      pdfWidth: rect.pdfWidth,
+      pdfHeight: rect.pdfHeight,
+      pdfScaleFactor,
+      strokeColor: '#000000',
+      fillColor: '#000000',
+      filled: false,
+      strokeWidth: 2,
+      page: currentPage
+    }
 
-    page.drawRectangle({
-      x: x,
-      y: pdfY,
-      width: width,
-      height: height,
-      borderColor: rgb(0.2, 0.4, 0.9),
-      borderWidth: 2
-    })
-
-    await refreshPDF()
+    setRectangleBoxes(prev => [...prev, newRect])
+    setSelectedRectangleId(newRect.id)
+    setSelectedTextId(null)
+    setSelectedCircleId(null)
+    setSelectedLineId(null)
+    setEditMode(null)
   }
 
-  const handleAddCircle = async (x, y, width, height) => {
-    if (!pdfDoc) return
-
-    await saveToUndoStack()
-
-    const pages = pdfDoc.getPages()
-    const page = pages[currentPage - 1]
-    const { height: pageHeight } = page.getSize()
-    
-    const centerX = x + width / 2
-    const centerY = pageHeight - y - height / 2
-    const radius = Math.min(width, height) / 2
-
-    page.drawCircle({
-      x: centerX,
-      y: centerY,
-      size: radius,
-      borderColor: rgb(0.9, 0.4, 0.2),
-      borderWidth: 2
-    })
-
-    await refreshPDF()
+  const updateSelectedRectangleBox = (updates) => {
+    if (!selectedRectangleId) return
+    setRectangleBoxes(prev => prev.map(b => (b.id === selectedRectangleId ? { ...b, ...updates } : b)))
   }
 
-  const handleAddLine = async (x, y, width, height) => {
-    if (!pdfDoc) return
+  const handleRemoveRectangleBox = (id) => {
+    setRectangleBoxes(prev => prev.filter(b => b.id !== id))
+    setSelectedRectangleId(prev => (prev === id ? null : prev))
+  }
 
-    await saveToUndoStack()
+  const handleAddCircle = (circle) => {
+    if (!circle) return
 
-    const pages = pdfDoc.getPages()
-    const page = pages[currentPage - 1]
-    const { height: pageHeight } = page.getSize()
-    
-    const startX = x
-    const startY = pageHeight - y
-    const endX = x + width
-    const endY = pageHeight - y - height
+    const pdfScaleFactor = typeof circle.pdfScaleFactor === 'number' && Number.isFinite(circle.pdfScaleFactor)
+      ? circle.pdfScaleFactor
+      : (1 / 1.5)
 
-    page.drawLine({
-      start: { x: startX, y: startY },
-      end: { x: endX, y: endY },
-      thickness: 2,
-      color: rgb(0.4, 0.2, 0.9)
-    })
+    const newCircle = {
+      id: Date.now(),
+      displayX: circle.displayX,
+      displayY: circle.displayY,
+      width: circle.width,
+      height: circle.height,
+      pdfX: circle.pdfX,
+      pdfY: circle.pdfY,
+      pdfWidth: circle.pdfWidth,
+      pdfHeight: circle.pdfHeight,
+      pdfScaleFactor,
+      strokeColor: '#000000',
+      fillColor: '#000000',
+      filled: false,
+      strokeWidth: 2,
+      page: currentPage
+    }
 
-    await refreshPDF()
+    setCircleBoxes(prev => [...prev, newCircle])
+    setSelectedCircleId(newCircle.id)
+    setSelectedTextId(null)
+    setSelectedRectangleId(null)
+    setSelectedLineId(null)
+    setEditMode(null)
+  }
+
+  const updateSelectedCircleBox = (updates) => {
+    if (!selectedCircleId) return
+    setCircleBoxes(prev => prev.map(b => (b.id === selectedCircleId ? { ...b, ...updates } : b)))
+  }
+
+  const handleRemoveCircleBox = (id) => {
+    setCircleBoxes(prev => prev.filter(b => b.id !== id))
+    setSelectedCircleId(prev => (prev === id ? null : prev))
+  }
+
+  const handleAddLine = (line) => {
+    if (!line) return
+
+    const pdfScaleFactor = typeof line.pdfScaleFactor === 'number' && Number.isFinite(line.pdfScaleFactor)
+      ? line.pdfScaleFactor
+      : (1 / 1.5)
+
+    const hasEndpoints =
+      typeof line.x1 === 'number' && Number.isFinite(line.x1) &&
+      typeof line.y1 === 'number' && Number.isFinite(line.y1) &&
+      typeof line.x2 === 'number' && Number.isFinite(line.x2) &&
+      typeof line.y2 === 'number' && Number.isFinite(line.y2)
+
+    // Back-compat: older payloads used a box + direction.
+    let x1 = line.x1
+    let y1 = line.y1
+    let x2 = line.x2
+    let y2 = line.y2
+    if (!hasEndpoints &&
+      typeof line.displayX === 'number' && typeof line.displayY === 'number' &&
+      typeof line.width === 'number' && typeof line.height === 'number'
+    ) {
+      const left = line.displayX
+      const top = line.displayY
+      const right = line.displayX + line.width
+      const bottom = line.displayY + line.height
+
+      const startOnRight = !!line.startOnRight
+      const startOnBottom = !!line.startOnBottom
+
+      x1 = startOnRight ? right : left
+      y1 = startOnBottom ? bottom : top
+      x2 = startOnRight ? left : right
+      y2 = startOnBottom ? top : bottom
+    }
+
+    const newLine = {
+      id: Date.now(),
+      x1,
+      y1,
+      x2,
+      y2,
+      pdfX1: line.pdfX1,
+      pdfY1: line.pdfY1,
+      pdfX2: line.pdfX2,
+      pdfY2: line.pdfY2,
+      pdfScaleFactor,
+      strokeColor: '#000000',
+      strokeWidth: 2,
+      page: currentPage
+    }
+
+    setLineBoxes(prev => [...prev, newLine])
+    setSelectedLineId(newLine.id)
+    setSelectedTextId(null)
+    setSelectedRectangleId(null)
+    setSelectedCircleId(null)
+    setEditMode(null)
+  }
+
+  const updateSelectedLineBox = (updates) => {
+    if (!selectedLineId) return
+    setLineBoxes(prev => prev.map(b => (b.id === selectedLineId ? { ...b, ...updates } : b)))
+  }
+
+  const handleRemoveLineBox = (id) => {
+    setLineBoxes(prev => prev.filter(b => b.id !== id))
+    setSelectedLineId(prev => (prev === id ? null : prev))
   }
 
   const handleAddHighlight = async (x, y, width, height) => {
@@ -851,6 +1154,9 @@ function PDFEditor() {
     await applyTextBoxesToPdf(exportDoc, validTextBoxes)
     await applyImageBoxesToPdf(exportDoc, imageBoxes)
     await applyTextSelectionsToPdf(exportDoc, textSelections)
+    await applyRectangleBoxesToPdf(exportDoc, rectangleBoxes)
+    await applyCircleBoxesToPdf(exportDoc, circleBoxes)
+    await applyLineBoxesToPdf(exportDoc, lineBoxes)
 
     const pdfBytes = await exportDoc.save()
     const blob = new Blob([pdfBytes], { type: 'application/pdf' })
@@ -875,7 +1181,13 @@ function PDFEditor() {
     
     <div className="pdf-editor">
       <header className={`app-header ${pdfFile ? "small" : ""}`}>
-        <h1>PDF Editor</h1>
+        <h1 className="header-title">
+          <img 
+          src="/images/iitr_logo.png" 
+          alt="Logo" 
+          className="header-logo"
+          />
+        PDF Editor</h1>
         <p>Upload, edit, and download your PDF files</p>
       </header>
       {!pdfFile ? (
@@ -911,6 +1223,21 @@ function PDFEditor() {
             selectedTextId={selectedTextId}
             onDeselectText={() => setSelectedTextId(null)}
             textBoxes={textBoxes}
+            selectedRectangleId={selectedRectangleId}
+            rectangleBoxes={rectangleBoxes}
+            updateSelectedRectangleBox={updateSelectedRectangleBox}
+            onDeselectRectangle={() => setSelectedRectangleId(null)}
+            onRemoveRectangleBox={handleRemoveRectangleBox}
+            selectedCircleId={selectedCircleId}
+            circleBoxes={circleBoxes}
+            updateSelectedCircleBox={updateSelectedCircleBox}
+            onDeselectCircle={() => setSelectedCircleId(null)}
+            onRemoveCircleBox={handleRemoveCircleBox}
+            selectedLineId={selectedLineId}
+            lineBoxes={lineBoxes}
+            updateSelectedLineBox={updateSelectedLineBox}
+            onDeselectLine={() => setSelectedLineId(null)}
+            onRemoveLineBox={handleRemoveLineBox}
             onApplyImages={handleApplyImages}
             hasImages={imageBoxes.length > 0}
             onImageUpload={() => imageInputRef.current.click()}
@@ -943,8 +1270,17 @@ function PDFEditor() {
             textBoxes={textBoxes.filter(box => box.page === currentPage)}
             imageBoxes={imageBoxes.filter(box => box.page === currentPage)}
             textSelections={textSelections.filter(sel => sel.page === currentPage)}
+            rectangleBoxes={rectangleBoxes.filter(b => b.page === currentPage)}
             selectedTextId={selectedTextId}
             setSelectedTextId={setSelectedTextId}
+            selectedRectangleId={selectedRectangleId}
+            setSelectedRectangleId={setSelectedRectangleId}
+            circleBoxes={circleBoxes.filter(b => b.page === currentPage)}
+            selectedCircleId={selectedCircleId}
+            setSelectedCircleId={setSelectedCircleId}
+            lineBoxes={lineBoxes.filter(b => b.page === currentPage)}
+            selectedLineId={selectedLineId}
+            setSelectedLineId={setSelectedLineId}
             autoFocusTextBoxId={autoFocusTextBoxId}
             onAutoFocusTextBoxDone={() => setAutoFocusTextBoxId(null)}
             onAddTextBox={handleAddTextBox}
@@ -952,6 +1288,18 @@ function PDFEditor() {
             onRemoveTextBox={handleRemoveTextBox}
             onUpdateImageBox={handleUpdateImageBox}
             onRemoveImageBox={handleRemoveImageBox}
+            onUpdateRectangleBox={(id, updates) => {
+              setRectangleBoxes(prev => prev.map(b => (b.id === id ? { ...b, ...updates } : b)))
+            }}
+            onRemoveRectangleBox={handleRemoveRectangleBox}
+            onUpdateCircleBox={(id, updates) => {
+              setCircleBoxes(prev => prev.map(b => (b.id === id ? { ...b, ...updates } : b)))
+            }}
+            onRemoveCircleBox={handleRemoveCircleBox}
+            onUpdateLineBox={(id, updates) => {
+              setLineBoxes(prev => prev.map(b => (b.id === id ? { ...b, ...updates } : b)))
+            }}
+            onRemoveLineBox={handleRemoveLineBox}
             onTextSelection={handleTextSelection}
             onRemoveSelection={handleRemoveSelection}
             onAddRectangle={handleAddRectangle}

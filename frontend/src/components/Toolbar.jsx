@@ -1,4 +1,5 @@
 import './Toolbar.css'
+import { useEffect, useState } from 'react'
 
 function Toolbar({
   editMode,
@@ -24,8 +25,25 @@ function Toolbar({
   selectedTextId,
   updateSelectedTextBox,
   textBoxes,
-  onDeselectText
+  onDeselectText,
+  selectedRectangleId,
+  rectangleBoxes,
+  updateSelectedRectangleBox,
+  onDeselectRectangle,
+  onRemoveRectangleBox,
+  selectedCircleId,
+  circleBoxes,
+  updateSelectedCircleBox,
+  onDeselectCircle,
+  onRemoveCircleBox,
+  selectedLineId,
+  lineBoxes,
+  updateSelectedLineBox,
+  onDeselectLine,
+  onRemoveLineBox
 }) {
+  const [showDrawTools, setShowDrawTools] = useState(false)
+
   const selectedBox = selectedTextId != null
     ? textBoxes.find(b => b.id === selectedTextId)
     : null
@@ -33,6 +51,40 @@ function Toolbar({
   const isBold = (selectedBox?.fontWeight ?? 'normal') === 'bold'
   const isItalic = (selectedBox?.fontStyle ?? 'normal') === 'italic'
   const currentColor = selectedBox?.color || '#000000'
+
+  const selectedRect = selectedRectangleId != null
+    ? (rectangleBoxes || []).find(b => b.id === selectedRectangleId)
+    : null
+
+  const rectStrokeColor = selectedRect?.strokeColor || '#000000'
+  const rectFillColor = selectedRect?.fillColor || '#000000'
+  const rectFilled = selectedRect?.filled === true
+  const rectStrokeWidth = selectedRect?.strokeWidth ?? 2
+
+  const selectedCircle = selectedCircleId != null
+    ? (circleBoxes || []).find(b => b.id === selectedCircleId)
+    : null
+  const circleStrokeColor = selectedCircle?.strokeColor || '#000000'
+  const circleFillColor = selectedCircle?.fillColor || '#000000'
+  const circleFilled = selectedCircle?.filled === true
+  const circleStrokeWidth = selectedCircle?.strokeWidth ?? 2
+
+  const selectedLine = selectedLineId != null
+    ? (lineBoxes || []).find(b => b.id === selectedLineId)
+    : null
+  const lineStrokeColor = selectedLine?.strokeColor || '#000000'
+  const lineStrokeWidth = selectedLine?.strokeWidth ?? 2
+
+  useEffect(() => {
+    // Hide draw tools when switching into other modes
+    if (
+      editMode !== 'rectangle' &&
+      editMode !== 'circle' &&
+      editMode !== 'line'
+    ) {
+      setShowDrawTools(false)
+    }
+  }, [editMode])
 
   return (
     <>
@@ -104,22 +156,16 @@ function Toolbar({
           </button>
         )} */}
         <button
-          className={`tool-btn rectangle-btn ${editMode === 'rectangle' ? 'active' : ''}`}
-          onClick={() => setEditMode(editMode === 'rectangle' ? null : 'rectangle')}
-          title="Draw rectangle"
-        >Re
-        </button>
-        <button
-          className={`tool-btn circle-btn ${editMode === 'circle' ? 'active' : ''}`}
-          onClick={() => setEditMode(editMode === 'circle' ? null : 'circle')}
-          title="Draw circle"
-        >Ci
-        </button>
-        <button
-          className={`tool-btn line-btn ${editMode === 'line' ? 'active' : ''}`}
-          onClick={() => setEditMode(editMode === 'line' ? null : 'line')}
-          title="Draw line"
-        >Line
+          className={`tool-btn draw-tools-btn ${showDrawTools || editMode === 'rectangle' || editMode === 'circle' || editMode === 'line' ? 'active' : ''}`}
+          onClick={() => {
+            const next = !showDrawTools
+            setShowDrawTools(next)
+            if (!next && (editMode === 'rectangle' || editMode === 'circle' || editMode === 'line')) {
+              setEditMode(null)
+            }
+          }}
+          title="Draw tools"
+        ><img src="/images/shape_logo.png" alt="Add Shape" className="tool-icon" />
         </button>
         <button
           className={`tool-btn highlight-btn ${editMode === 'highlight' ? 'active' : ''}`}
@@ -260,6 +306,238 @@ function Toolbar({
           </button>
         </div>
       )}
+
+      {/* SECONDARY TOOLBAR - RECTANGLE SELECTION */}
+      {selectedTextId == null && selectedRectangleId != null && (
+        <div className="secondary-toolbar">
+          <button
+            type="button"
+            className={`tool-btn style-toggle-btn ${rectFilled ? 'active' : ''}`}
+            onClick={() => {
+              updateSelectedRectangleBox({ filled: !rectFilled })
+            }}
+            title="Solid fill"
+          >
+            Solid
+          </button>
+
+          <label className="secondary-label">Fill</label>
+          <input
+            type="color"
+            className="color-input"
+            value={rectFillColor}
+            onChange={(e) => updateSelectedRectangleBox({ fillColor: e.target.value })}
+            title="Fill color"
+            disabled={!rectFilled}
+          />
+
+          <label className="secondary-label">Stroke</label>
+          <input
+            type="color"
+            className="color-input"
+            value={rectStrokeColor}
+            onChange={(e) => updateSelectedRectangleBox({ strokeColor: e.target.value })}
+            title="Stroke color"
+          />
+
+          <select
+            className="font-size-select"
+            value={rectStrokeWidth}
+            onChange={(e) => updateSelectedRectangleBox({ strokeWidth: Number(e.target.value) })}
+            title="Stroke width"
+          >
+            <option value={1}>1px</option>
+            <option value={2}>2px</option>
+            <option value={3}>3px</option>
+            <option value={4}>4px</option>
+            <option value={6}>6px</option>
+            <option value={8}>8px</option>
+            <option value={10}>10px</option>
+          </select>
+
+          <button
+            type="button"
+            className="tool-btn"
+            onClick={() => {
+              if (onRemoveRectangleBox && selectedRectangleId != null) onRemoveRectangleBox(selectedRectangleId)
+            }}
+            title="Delete rectangle"
+          >
+            Delete
+          </button>
+
+          <button
+            type="button"
+            className="tool-btn apply-text-btn"
+            onClick={() => {
+              if (onDeselectRectangle) onDeselectRectangle()
+            }}
+          >
+            Done
+          </button>
+        </div>
+      )}
+
+      {/* SECONDARY TOOLBAR - CIRCLE SELECTION */}
+      {selectedTextId == null && selectedRectangleId == null && selectedCircleId != null && (
+        <div className="secondary-toolbar">
+          <button
+            type="button"
+            className={`tool-btn style-toggle-btn ${circleFilled ? 'active' : ''}`}
+            onClick={() => {
+              updateSelectedCircleBox({ filled: !circleFilled })
+            }}
+            title="Solid fill"
+          >
+            Solid
+          </button>
+
+          <label className="secondary-label">Fill</label>
+          <input
+            type="color"
+            className="color-input"
+            value={circleFillColor}
+            onChange={(e) => updateSelectedCircleBox({ fillColor: e.target.value })}
+            title="Fill color"
+            disabled={!circleFilled}
+          />
+
+          <label className="secondary-label">Stroke</label>
+          <input
+            type="color"
+            className="color-input"
+            value={circleStrokeColor}
+            onChange={(e) => updateSelectedCircleBox({ strokeColor: e.target.value })}
+            title="Stroke color"
+          />
+
+          <select
+            className="font-size-select"
+            value={circleStrokeWidth}
+            onChange={(e) => updateSelectedCircleBox({ strokeWidth: Number(e.target.value) })}
+            title="Stroke width"
+          >
+            <option value={1}>1px</option>
+            <option value={2}>2px</option>
+            <option value={3}>3px</option>
+            <option value={4}>4px</option>
+            <option value={6}>6px</option>
+            <option value={8}>8px</option>
+            <option value={10}>10px</option>
+          </select>
+
+          <button
+            type="button"
+            className="tool-btn"
+            onClick={() => {
+              if (onRemoveCircleBox && selectedCircleId != null) onRemoveCircleBox(selectedCircleId)
+            }}
+            title="Delete circle"
+          >
+            Delete
+          </button>
+
+          <button
+            type="button"
+            className="tool-btn apply-text-btn"
+            onClick={() => {
+              if (onDeselectCircle) onDeselectCircle()
+            }}
+          >
+            Done
+          </button>
+        </div>
+      )}
+
+      {/* SECONDARY TOOLBAR - LINE SELECTION */}
+      {selectedTextId == null && selectedRectangleId == null && selectedCircleId == null && selectedLineId != null && (
+        <div className="secondary-toolbar">
+          <label className="secondary-label">Stroke</label>
+          <input
+            type="color"
+            className="color-input"
+            value={lineStrokeColor}
+            onChange={(e) => updateSelectedLineBox({ strokeColor: e.target.value })}
+            title="Line color"
+          />
+
+          <select
+            className="font-size-select"
+            value={lineStrokeWidth}
+            onChange={(e) => updateSelectedLineBox({ strokeWidth: Number(e.target.value) })}
+            title="Stroke width"
+          >
+            <option value={1}>1px</option>
+            <option value={2}>2px</option>
+            <option value={3}>3px</option>
+            <option value={4}>4px</option>
+            <option value={6}>6px</option>
+            <option value={8}>8px</option>
+            <option value={10}>10px</option>
+          </select>
+
+          <button
+            type="button"
+            className="tool-btn"
+            onClick={() => {
+              if (onRemoveLineBox && selectedLineId != null) onRemoveLineBox(selectedLineId)
+            }}
+            title="Delete line"
+          >
+            Delete
+          </button>
+
+          <button
+            type="button"
+            className="tool-btn apply-text-btn"
+            onClick={() => {
+              if (onDeselectLine) onDeselectLine()
+            }}
+          >
+            Done
+          </button>
+        </div>
+      )}
+
+      {/* SECONDARY TOOLBAR - DRAW TOOLS */}
+      {selectedTextId == null && selectedRectangleId == null && selectedCircleId == null && selectedLineId == null && showDrawTools && (
+        <div className="secondary-toolbar">
+          <button
+            type="button"
+            className={`tool-btn rectangle-btn ${editMode === 'rectangle' ? 'active' : ''}`}
+            onClick={() => setEditMode('rectangle')}
+            title="Draw rectangle"
+          ><img src="/images/rect_logo.png" alt="Add Rectangle" className="tool-icon" />
+          </button>
+          <button
+            type="button"
+            className={`tool-btn circle-btn ${editMode === 'circle' ? 'active' : ''}`}
+            onClick={() => setEditMode('circle')}
+            title="Draw circle"
+          ><img src="/images/cir_logo.png" alt="Add Circle" className="tool-icon" />
+          </button>
+          <button
+            type="button"
+            className={`tool-btn line-btn ${editMode === 'line' ? 'active' : ''}`}
+            onClick={() => setEditMode('line')}
+            title="Draw line"
+          ><img src="/images/line_logo.png" alt="Add Line" className="tool-icon" />
+          </button>
+          <button
+            type="button"
+            className="tool-btn"
+            onClick={() => {
+              setShowDrawTools(false)
+              if (editMode === 'rectangle' || editMode === 'circle' || editMode === 'line') {
+                setEditMode(null)
+              }
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       {/* SECONDARY TOOLBAR - IMAGE MODE */}
         {editMode === 'image' && (
   <div className="secondary-toolbar">

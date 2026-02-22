@@ -2,7 +2,7 @@
 
 A full-stack PDF editor built with React and Node.js. Upload PDFs, add text, draw shapes, and download your edited documents.
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 TEB/
@@ -24,16 +24,16 @@ TEB/
 └── README.md
 ```
 
-## ✨ Features
+## Features
 
-- 📤 Upload PDF files
-- ✏️ Add text to PDFs
-- ▭ Draw rectangles on PDFs
-- 📄 Navigate between pages
-- 💾 Download edited PDFs
-- 🎨 Modern, responsive UI
+- Upload PDF files
+- Add text to PDFs
+- Draw rectangles on PDFs
+- Navigate between pages
+- Download edited PDFs
+- Modern, responsive UI
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -72,7 +72,7 @@ TEB/
 
 3. Open your browser and navigate to `http://localhost:3000`
 
-## 🛠️ Technologies Used
+## Technologies Used
 
 ### Frontend
 - **React** - UI library
@@ -86,7 +86,7 @@ TEB/
 - **Multer** - File upload handling
 - **pdf-lib** - PDF processing
 
-## 📝 Usage
+## Usage
 
 1. Click "Upload PDF" to select a PDF file
 2. Use the toolbar to:
@@ -95,7 +95,7 @@ TEB/
    - Navigate pages: Use previous/next buttons
 3. Download your edited PDF using the "Download" button
 
-## 🔧 Development
+## Development
 
 ### Frontend Development
 ```bash
@@ -112,7 +112,7 @@ npm run dev      # Start with auto-reload (Node 18.11+)
 npm start        # Start normally
 ```
 
-## 📦 Build for Production
+## Build for Production
 
 ```bash
 # Build frontend
@@ -122,10 +122,6 @@ npm run build
 # The build output will be in frontend/dist
 ```
 
-## 🤝 Contributing
+## Contributing
 
 Feel free to submit issues and enhancement requests!
-
-## 📄 License
-
-MIT

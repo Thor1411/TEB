@@ -48,7 +48,7 @@
   font-family: "Montserrat", sans-serif;
   padding: 0.85rem 1.5rem;
   /* border: 2px solid #456882; */
-  background: rgba(140, 148, 145, 0.2);
+  background: #1B3C53;
   color: #D2C1B6;
   border-radius: 4px;
   cursor: pointer;
@@ -62,7 +62,7 @@
 }
 
 .nav-btn:hover:not(:disabled) {
-  background: rgba(140, 148, 145, 0.2);
+  background: #2b536f;
   border-color: rgba(140, 148, 145, 0.2);
   color: #D2C1B6;
 }
@@ -124,7 +124,7 @@
 
 
 .pagination {
-  background: rgba(140, 148, 145, 0.2);
+  background: #1B3C53;
   padding: 0.5rem 1rem;
   border-radius: 6px;
   /* border: 1px solid #8C9491; */
@@ -248,4 +248,11 @@
 .color-input:focus {
   outline: none;
   border-color: #D2C1B6;
+}
+
+.secondary-label {
+  font-family: "Montserrat", sans-serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #D2C1B6;
 }

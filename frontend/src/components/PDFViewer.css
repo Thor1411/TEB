@@ -178,8 +178,13 @@
   border: 2px solid #8C9491;
   box-shadow: 0 2px 8px rgba(42, 47, 51, 0.2);
   z-index: 100;
-  cursor: move;
+  cursor: grab;
   background: rgba(255, 255, 255, 0.1);
+  touch-action: none;
+}
+
+.image-box.dragging {
+  cursor: grabbing;
 }
 
 .image-box:hover {
@@ -241,6 +246,167 @@
   bottom: -6px;
   right: -6px;
   cursor: nwse-resize;
+}
+
+/* Rectangle overlay box */
+.rect-box {
+  position: absolute;
+  z-index: 95;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  box-sizing: border-box;
+}
+
+.rect-box.dragging {
+  cursor: grabbing;
+}
+
+.rect-box.selected {
+  outline: 2px dashed #8C8C9C;
+  outline-offset: 2px;
+}
+
+.rect-box-delete {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #2A2F33;
+  color: #BBB6A5;
+  border: 2px solid #8C9491;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  z-index: 101;
+}
+
+.rect-box-delete:hover {
+  background: #8C8C9C;
+  color: white;
+}
+
+/* Circle/Ellipse overlay box */
+.circle-box {
+  position: absolute;
+  z-index: 95;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  box-sizing: border-box;
+  border-radius: 9999px;
+}
+
+.circle-box.dragging {
+  cursor: grabbing;
+}
+
+.circle-box.selected {
+  outline: 2px dashed #8C8C9C;
+  outline-offset: 2px;
+}
+
+.circle-box-delete {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #2A2F33;
+  color: #BBB6A5;
+  border: 2px solid #8C9491;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  z-index: 101;
+}
+
+.circle-box-delete:hover {
+  background: #8C8C9C;
+  color: white;
+}
+
+/* Line overlay box */
+.line-box {
+  position: absolute;
+  z-index: 95;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  box-sizing: border-box;
+}
+
+/* Endpoint-based line overlay */
+.lines-overlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 95;
+}
+
+.line-drag-preview {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.line-box.dragging {
+  cursor: grabbing;
+}
+
+.line-box.selected {
+  outline: 2px dashed #8C8C9C;
+  outline-offset: 2px;
+}
+
+.line-box-svg {
+  display: block;
+  pointer-events: none;
+}
+
+.line-box-delete {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #2A2F33;
+  color: #BBB6A5;
+  border: 2px solid #8C9491;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  z-index: 101;
+}
+
+/* When used inside SVG foreignObject, we control placement via x/y */
+.line-box-delete.line-point-delete {
+  position: static;
+  top: auto;
+  right: auto;
+}
+
+.line-box-delete:hover {
+  background: #8C8C9C;
+  color: white;
 }
 
 /* Text Layer Styles */

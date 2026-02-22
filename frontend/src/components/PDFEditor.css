@@ -12,6 +12,7 @@
   text-align: center;
   color: #1B3C53;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  align-items: flex-start; 
   /* border-bottom: 1px solid #8C9491; */
 }
 
@@ -53,6 +54,26 @@
 /* Subtitle on right */
 .app-header.small p {
   display:none
+}
+
+.header-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+/* NORMAL HEADER LOGO */
+.header-logo {
+  width: 55px;
+  height: 55px;
+  object-fit: contain;
+}
+
+/* SMALL HEADER LOGO */
+.app-header.small .header-logo {
+  width: 22px;
+  height: 22px;
 }
 
 .upload-section {
