@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
+import { PDFDocument, rgb, StandardFonts, degrees } from 'pdf-lib'
+import fontkit from '@pdf-lib/fontkit'
 import PDFViewer from './PDFViewer'
 import Toolbar from './Toolbar'
 import './PDFEditor.css'
@@ -12,12 +13,41 @@ function PDFEditor() {
   const [editMode, setEditMode] = useState(null)
   const [textContent, setTextContent] = useState('')
   const [fontSize, setFontSize] = useState(16)
+  // Use a stable "font key" (mapped to CSS + PDF fonts)
+  const [fontFamily, setFontFamily] = useState('helvetica')
   const [textBoxes, setTextBoxes] = useState([]) // Active text boxes on canvas
   const [imageBoxes, setImageBoxes] = useState([]) // Active image boxes on canvas
   const [textSelections, setTextSelections] = useState([]) // Text selections for highlighting
   const [undoStack, setUndoStack] = useState([])
   const fileInputRef = useRef(null)
+  const [selectedTextId, setSelectedTextId] = useState(null)
   const imageInputRef = useRef(null)
+  const [autoFocusTextBoxId, setAutoFocusTextBoxId] = useState(null)
+  const fontBytesCacheRef = useRef(new Map())
+
+  // Deselect text box when clicking outside text boxes + toolbars
+  useEffect(() => {
+    if (selectedTextId == null) return
+
+    const handleGlobalMouseDown = (e) => {
+      const el = e.target instanceof Element ? e.target : e.target?.parentElement
+      if (!el) return
+
+      // Keep selection when interacting with text boxes or toolbars
+      if (
+        el.closest('.text-box') ||
+        el.closest('.secondary-toolbar') ||
+        el.closest('.toolbar')
+      ) {
+        return
+      }
+
+      setSelectedTextId(null)
+    }
+
+    document.addEventListener('mousedown', handleGlobalMouseDown)
+    return () => document.removeEventListener('mousedown', handleGlobalMouseDown)
+  }, [selectedTextId])
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0]
@@ -42,6 +72,12 @@ function PDFEditor() {
   const handleAddTextBox = (coords) => {
     if (editMode !== 'text') return
 
+    const pdfScaleFactor = typeof coords.pdfScaleFactor === 'number' && Number.isFinite(coords.pdfScaleFactor)
+      ? coords.pdfScaleFactor
+      : (1 / 1.5)
+
+    const pdfFontSize = fontSize * pdfScaleFactor
+
     const newTextBox = {
       id: Date.now(),
       text: '', // Empty initially - user types directly in the box
@@ -50,10 +86,21 @@ function PDFEditor() {
       pdfX: coords.pdfX, // For PDF drawing
       pdfY: coords.pdfY,
       fontSize: fontSize,
+      pdfFontSize,
+      pdfScaleFactor,
+      fontFamily: fontFamily,
+      fontWeight: 'normal',
+      fontStyle: 'normal',
+      color: '#000000',
       page: currentPage
     }
 
-    setTextBoxes([...textBoxes, newTextBox])
+    setTextBoxes(prev => [...prev, newTextBox])
+    setSelectedTextId(newTextBox.id)
+    setAutoFocusTextBoxId(newTextBox.id)
+
+    // Return cursor to normal after placing one text box
+    setEditMode(null)
   }
 
   // Update text box position when dragged
@@ -258,50 +305,388 @@ function PDFEditor() {
   }
 
   // Apply text boxes to PDF
-  const handleApplyText = async () => {
-    // Filter out empty text boxes
-    const validBoxes = textBoxes.filter(box => box.text.trim())
+  // const handleApplyText = async () => {
+  //   // Filter out empty text boxes
+  //   const validBoxes = textBoxes.filter(box => box.text.trim())
     
-    if (validBoxes.length === 0) {
-      alert('Please add some text to the text boxes')
-      return
+  //   if (validBoxes.length === 0) {
+  //     alert('Please add some text to the text boxes')
+  //     return
+  //   }
+
+  //   await saveToUndoStack()
+
+  //   const pages = pdfDoc.getPages()
+  //   const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
+
+  //   // Group text boxes by page
+  //   const boxesByPage = {}
+  //   validBoxes.forEach(box => {
+  //     if (!boxesByPage[box.page]) {
+  //       boxesByPage[box.page] = []
+  //     }
+  //     boxesByPage[box.page].push(box)
+  //   })
+
+  //   // Add text to each page
+  //   for (const [pageNum, boxes] of Object.entries(boxesByPage)) {
+  //     const page = pages[parseInt(pageNum) - 1]
+  //     const { height: pageHeight } = page.getSize()
+
+  //     boxes.forEach(box => {
+  //       // Use PDF coordinates that were calculated when placing the text box
+  //       const pdfY = pageHeight - box.pdfY - box.fontSize
+  //       page.drawText(box.text, {
+  //         x: box.pdfX,
+  //         y: pdfY,
+  //         size: box.fontSize,
+  //         font: font,
+  //         color: rgb(0, 0, 0)
+  //       })
+  //     })
+  //   }
+
+  //   await refreshPDF()
+  //   setTextBoxes([])
+  //   setEditMode(null)
+  // }
+
+  const getFontBytes = async (url) => {
+    if (!url) return null
+    const cache = fontBytesCacheRef.current
+    if (cache.has(url)) return cache.get(url)
+
+    const res = await fetch(url)
+    if (!res.ok) {
+      throw new Error(`Failed to load font: ${url}`)
+    }
+    const buf = await res.arrayBuffer()
+    const bytes = new Uint8Array(buf)
+    cache.set(url, bytes)
+    return bytes
+  }
+
+  const getCustomFontUrl = (fontKey) => {
+    switch (fontKey) {
+      case 'inter':
+        return '/fonts/Inter.ttf'
+      case 'lato':
+        return '/fonts/Lato-Regular.ttf'
+      case 'poppins':
+        return '/fonts/Poppins-Regular.ttf'
+      case 'oswald':
+        return '/fonts/Oswald.ttf'
+      case 'roboto-condensed':
+        return '/fonts/RobotoCondensed-Regular.ttf'
+      default:
+        return null
+    }
+  }
+
+  const parseHexColorToRgb = (hex) => {
+    if (typeof hex !== 'string') return rgb(0, 0, 0)
+    const raw = hex.trim()
+    if (!raw.startsWith('#')) return rgb(0, 0, 0)
+    const h = raw.slice(1)
+    let r, g, b
+    if (h.length === 3) {
+      r = parseInt(h[0] + h[0], 16)
+      g = parseInt(h[1] + h[1], 16)
+      b = parseInt(h[2] + h[2], 16)
+    } else if (h.length === 6) {
+      r = parseInt(h.slice(0, 2), 16)
+      g = parseInt(h.slice(2, 4), 16)
+      b = parseInt(h.slice(4, 6), 16)
+    } else {
+      return rgb(0, 0, 0)
     }
 
-    await saveToUndoStack()
+    if (![r, g, b].every(n => Number.isFinite(n))) return rgb(0, 0, 0)
+    return rgb(r / 255, g / 255, b / 255)
+  }
 
-    const pages = pdfDoc.getPages()
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
+  const getStandardFontName = (fontKey, isBold, isItalic) => {
+    if (fontKey === 'helvetica') {
+      if (isBold && isItalic) return StandardFonts.HelveticaBoldOblique
+      if (isBold) return StandardFonts.HelveticaBold
+      if (isItalic) return StandardFonts.HelveticaOblique
+      return StandardFonts.Helvetica
+    }
+
+    if (fontKey === 'times') {
+      if (isBold && isItalic) return StandardFonts.TimesRomanBoldItalic
+      if (isBold) return StandardFonts.TimesRomanBold
+      if (isItalic) return StandardFonts.TimesRomanItalic
+      return StandardFonts.TimesRoman
+    }
+
+    if (fontKey === 'courier') {
+      if (isBold && isItalic) return StandardFonts.CourierBoldOblique
+      if (isBold) return StandardFonts.CourierBold
+      if (isItalic) return StandardFonts.CourierOblique
+      return StandardFonts.Courier
+    }
+
+    return StandardFonts.Helvetica
+  }
+
+  const normalizeFontKey = (value) => {
+    if (!value) return 'helvetica'
+
+    // Already normalized
+    if (
+      value === 'helvetica' ||
+      value === 'times' ||
+      value === 'courier' ||
+      value === 'roboto-condensed' ||
+      value === 'oswald' ||
+      value === 'inter' ||
+      value === 'poppins' ||
+      value === 'lato'
+    ) {
+      return value
+    }
+
+    // Legacy / display values
+    if (value === 'Helvetica') return 'helvetica'
+    if (value === 'TimesRoman' || value === 'Times') return 'times'
+    if (value === 'Courier') return 'courier'
+    if (value === 'Roboto Condensed' || value === 'RobotoCondensed') return 'roboto-condensed'
+    if (value === 'Oswald') return 'oswald'
+    if (value === 'Inter') return 'inter'
+    if (value === 'Poppins') return 'poppins'
+    if (value === 'Lato') return 'lato'
+
+    return 'helvetica'
+  }
+
+  const applyTextBoxesToPdf = async (doc, boxesToApply) => {
+    if (!doc || !boxesToApply || boxesToApply.length === 0) return
+
+    const pages = doc.getPages()
+    const embeddedFontCache = new Map()
+    const fontkitInstance = fontkit?.default ?? fontkit
 
     // Group text boxes by page
     const boxesByPage = {}
-    validBoxes.forEach(box => {
+    boxesToApply.forEach(box => {
       if (!boxesByPage[box.page]) {
         boxesByPage[box.page] = []
       }
       boxesByPage[box.page].push(box)
     })
 
-    // Add text to each page
     for (const [pageNum, boxes] of Object.entries(boxesByPage)) {
+      const page = pages[parseInt(pageNum) - 1]
+      const { height } = page.getSize()
+
+      for (const box of boxes) {
+        let font
+        const fontKey = normalizeFontKey(box.fontFamily)
+        const isBold = (box.fontWeight ?? 'normal') === 'bold' || box.isBold === true
+        const isItalic = (box.fontStyle ?? 'normal') === 'italic' || box.isItalic === true
+
+        const isStandard = fontKey === 'helvetica' || fontKey === 'times' || fontKey === 'courier'
+        const fontCacheKey = isStandard
+          ? `${fontKey}:${isBold ? 'b' : ''}${isItalic ? 'i' : ''}`
+          : fontKey
+
+        if (embeddedFontCache.has(fontCacheKey)) {
+          font = embeddedFontCache.get(fontCacheKey)
+        } else {
+          if (isStandard) {
+            const stdFontName = getStandardFontName(fontKey, isBold, isItalic)
+            font = await doc.embedFont(stdFontName)
+          } else {
+            // Embed a real TTF for export so the downloaded PDF matches the editor.
+            // Bold/italic for custom fonts is handled via a simple PDF fallback (see below).
+            const fontUrl = getCustomFontUrl(fontKey)
+            if (!fontUrl || !fontkitInstance) {
+              font = await doc.embedFont(StandardFonts.Helvetica)
+            } else {
+              try {
+                doc.registerFontkit(fontkitInstance)
+                const fontBytes = await getFontBytes(fontUrl)
+                font = await doc.embedFont(fontBytes, { subset: true })
+              } catch {
+                font = await doc.embedFont(StandardFonts.Helvetica)
+              }
+            }
+          }
+          embeddedFontCache.set(fontCacheKey, font)
+        }
+
+        const pdfFontSize = typeof box.pdfFontSize === 'number' && Number.isFinite(box.pdfFontSize)
+          ? box.pdfFontSize
+          : box.fontSize
+
+        // Match on-screen positioning:
+        // - The on-screen text starts *inside* the text box due to CSS padding.
+        // - pdf-lib draws from the baseline, not from the top.
+        const pdfScaleFactor = typeof box.pdfScaleFactor === 'number' && Number.isFinite(box.pdfScaleFactor)
+          ? box.pdfScaleFactor
+          : (1 / 1.5)
+
+        const paddingLeftPx = 12
+        const paddingTopPx = 8
+
+        const pdfTextX = box.pdfX + (paddingLeftPx * pdfScaleFactor)
+        const pdfTextTop = box.pdfY + (paddingTopPx * pdfScaleFactor)
+
+        // Use ascent (exclude descender) to align top better.
+        let ascentHeight = pdfFontSize
+        if (typeof font?.heightAtSize === 'function') {
+          try {
+            ascentHeight = font.heightAtSize(pdfFontSize, { descender: false })
+          } catch {
+            ascentHeight = font.heightAtSize(pdfFontSize)
+          }
+        }
+
+        const pdfY = height - pdfTextTop - ascentHeight
+
+        const textColor = parseHexColorToRgb(box.color)
+
+        const shouldFakeItalic = !isStandard && isItalic
+        const shouldFakeBold = !isStandard && isBold
+
+        const drawOptions = {
+          x: pdfTextX,
+          y: pdfY,
+          size: pdfFontSize,
+          font,
+          color: textColor,
+          ...(shouldFakeItalic ? { xSkew: degrees(12) } : {})
+        }
+
+        page.drawText(box.text, drawOptions)
+        if (shouldFakeBold) {
+          const boldOffset = Math.max(0.25, pdfFontSize * 0.03)
+          page.drawText(box.text, {
+            ...drawOptions,
+            x: pdfTextX + boldOffset
+          })
+        }
+      }
+    }
+  }
+
+  const applyImageBoxesToPdf = async (doc, boxesToApply) => {
+    if (!doc || !boxesToApply || boxesToApply.length === 0) return
+
+    const pages = doc.getPages()
+
+    // Group images by page
+    const imagesByPage = {}
+    boxesToApply.forEach(box => {
+      if (!imagesByPage[box.page]) {
+        imagesByPage[box.page] = []
+      }
+      imagesByPage[box.page].push(box)
+    })
+
+    for (const [pageNum, images] of Object.entries(imagesByPage)) {
       const page = pages[parseInt(pageNum) - 1]
       const { height: pageHeight } = page.getSize()
 
-      boxes.forEach(box => {
-        // Use PDF coordinates that were calculated when placing the text box
-        const pdfY = pageHeight - box.pdfY - box.fontSize
-        page.drawText(box.text, {
-          x: box.pdfX,
+      for (const imgBox of images) {
+        // Convert base64 to bytes
+        const base64Data = imgBox.imageData.split(',')[1]
+        const imageBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0))
+
+        // Embed image based on type
+        let pdfImage
+        if (imgBox.fileType === 'image/png') {
+          pdfImage = await doc.embedPng(imageBytes)
+        } else if (imgBox.fileType === 'image/jpeg' || imgBox.fileType === 'image/jpg') {
+          pdfImage = await doc.embedJpg(imageBytes)
+        } else {
+          // Try PNG first, fallback to JPG
+          try {
+            pdfImage = await doc.embedPng(imageBytes)
+          } catch {
+            pdfImage = await doc.embedJpg(imageBytes)
+          }
+        }
+
+        const pdfY = pageHeight - imgBox.pdfY - imgBox.height
+        page.drawImage(pdfImage, {
+          x: imgBox.pdfX,
           y: pdfY,
-          size: box.fontSize,
-          font: font,
-          color: rgb(0, 0, 0)
+          width: imgBox.width,
+          height: imgBox.height
+        })
+      }
+    }
+  }
+
+  const applyTextSelectionsToPdf = async (doc, selectionsToApply) => {
+    if (!doc || !selectionsToApply || selectionsToApply.length === 0) return
+
+    const pages = doc.getPages()
+
+    // Group selections by page
+    const selectionsByPage = {}
+    selectionsToApply.forEach(sel => {
+      if (!selectionsByPage[sel.page]) {
+        selectionsByPage[sel.page] = []
+      }
+      selectionsByPage[sel.page].push(sel)
+    })
+
+    for (const [pageNum, selections] of Object.entries(selectionsByPage)) {
+      const page = pages[parseInt(pageNum) - 1]
+      const { height: pageHeight } = page.getSize()
+
+      selections.forEach(sel => {
+        sel.rects.forEach(rect => {
+          const pdfY = pageHeight - rect.y - rect.height
+          page.drawRectangle({
+            x: rect.x,
+            y: pdfY,
+            width: rect.width,
+            height: rect.height,
+            color: rgb(1, 1, 0),
+            opacity: 0.3
+          })
         })
       })
     }
+  }
 
-    await refreshPDF()
-    setTextBoxes([])
+  // "Apply" keeps text editable + draggable (Canva/PPT style).
+  // Text is baked into the PDF only when downloading.
+  const handleApplyText = async () => {
+    const validBoxes = textBoxes.filter(box => box.text.trim())
+    if (validBoxes.length === 0) {
+      alert('Please add some text to the text boxes')
+      return
+    }
+
     setEditMode(null)
+  }
+
+  const updateSelectedTextBox = (updates) => {
+    if (!selectedTextId) return
+
+    setTextBoxes(prev =>
+      prev.map(box => {
+        if (box.id !== selectedTextId) return box
+
+        const next = { ...box, ...updates }
+
+        // Keep pdfFontSize consistent with on-screen fontSize
+        if (updates.fontSize !== undefined) {
+          const scaleFactor = typeof box.pdfScaleFactor === 'number' && Number.isFinite(box.pdfScaleFactor)
+            ? box.pdfScaleFactor
+            : (1 / 1.5)
+          next.pdfScaleFactor = scaleFactor
+          next.pdfFontSize = updates.fontSize * scaleFactor
+        }
+
+        return next
+      })
+    )
   }
 
   // Ctrl+Z undo functionality
@@ -457,28 +842,17 @@ function PDFEditor() {
   const handleDownload = async () => {
     if (!pdfDoc) return
 
-    // Check if there are unapplied text boxes or images
-    const validBoxes = textBoxes.filter(box => box.text.trim())
-    const unappliedCount = validBoxes.length + imageBoxes.length
-    
-    if (unappliedCount > 0) {
-      let message = ''
-      if (validBoxes.length > 0 && imageBoxes.length > 0) {
-        message = `You have ${validBoxes.length} text box(es) and ${imageBoxes.length} image(s) that haven't been applied yet. Apply them before downloading?`
-      } else if (validBoxes.length > 0) {
-        message = `You have ${validBoxes.length} text box(es) that haven't been applied yet. Apply them before downloading?`
-      } else {
-        message = `You have ${imageBoxes.length} image(s) that haven't been applied yet. Apply them before downloading?`
-      }
-      
-      const shouldApply = window.confirm(message)
-      if (shouldApply) {
-        if (validBoxes.length > 0) await handleApplyText()
-        if (imageBoxes.length > 0) await handleApplyImages()
-      }
-    }
+    // Export-only: bake overlays into a temporary copy of the PDF for download.
+    // Keep editor state (text boxes / images / highlights) unchanged.
+    const exportBytes = await pdfDoc.save()
+    const exportDoc = await PDFDocument.load(exportBytes)
 
-    const pdfBytes = await pdfDoc.save()
+    const validTextBoxes = textBoxes.filter(box => box.text.trim())
+    await applyTextBoxesToPdf(exportDoc, validTextBoxes)
+    await applyImageBoxesToPdf(exportDoc, imageBoxes)
+    await applyTextSelectionsToPdf(exportDoc, textSelections)
+
+    const pdfBytes = await exportDoc.save()
     const blob = new Blob([pdfBytes], { type: 'application/pdf' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -498,7 +872,12 @@ function PDFEditor() {
   }
 
   return (
+    
     <div className="pdf-editor">
+      <header className={`app-header ${pdfFile ? "small" : ""}`}>
+        <h1>PDF Editor</h1>
+        <p>Upload, edit, and download your PDF files</p>
+      </header>
       {!pdfFile ? (
         <div className="upload-section">
           <input
@@ -512,9 +891,8 @@ function PDFEditor() {
             className="upload-btn"
             onClick={() => fileInputRef.current.click()}
           >
-            📁 Upload PDF
+            Click to select a PDF file to edit
           </button>
-          <p className="upload-hint">Click to select a PDF file to edit</p>
         </div>
       ) : (
         <>
@@ -527,6 +905,12 @@ function PDFEditor() {
             onUndo={performUndo}
             onApplyText={handleApplyText}
             hasTextBoxes={textBoxes.length > 0}
+            fontFamily={fontFamily}
+            setFontFamily={setFontFamily}
+            updateSelectedTextBox={updateSelectedTextBox}
+            selectedTextId={selectedTextId}
+            onDeselectText={() => setSelectedTextId(null)}
+            textBoxes={textBoxes}
             onApplyImages={handleApplyImages}
             hasImages={imageBoxes.length > 0}
             onImageUpload={() => imageInputRef.current.click()}
@@ -559,6 +943,10 @@ function PDFEditor() {
             textBoxes={textBoxes.filter(box => box.page === currentPage)}
             imageBoxes={imageBoxes.filter(box => box.page === currentPage)}
             textSelections={textSelections.filter(sel => sel.page === currentPage)}
+            selectedTextId={selectedTextId}
+            setSelectedTextId={setSelectedTextId}
+            autoFocusTextBoxId={autoFocusTextBoxId}
+            onAutoFocusTextBoxDone={() => setAutoFocusTextBoxId(null)}
             onAddTextBox={handleAddTextBox}
             onUpdateTextBox={handleUpdateTextBox}
             onRemoveTextBox={handleRemoveTextBox}

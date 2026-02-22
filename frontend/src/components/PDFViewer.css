@@ -7,7 +7,7 @@
   padding: 2rem;
   overflow: auto;
   position: relative;
-  background: #BBB6A5;
+  background: #F9F3EF;
 }
 
 .canvas-container {
@@ -24,7 +24,6 @@
   height: auto;
   display: block;
   border: 2px solid #8C9491;
-  transition: border-color 0.2s ease;
 }
 
 .pdf-viewer canvas.edit-mode {
@@ -106,13 +105,17 @@
   border: 2px solid #8C8C9C;
   padding: 8px 12px;
   border-radius: 4px;
-  cursor: move;
+  cursor: grab;
   min-width: 100px;
   max-width: 500px;
   box-shadow: 0 2px 8px rgba(42, 47, 51, 0.2);
   z-index: 100;
-  transition: all 0.2s ease;
   user-select: none;
+  touch-action: none;
+}
+
+.text-box.dragging {
+  cursor: grabbing;
 }
 
 .text-box:hover {
@@ -126,8 +129,9 @@
   min-width: 80px;
   min-height: 24px;
   cursor: text;
-  color: #2A2F33;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
   word-wrap: break-word;
   user-select: text;
 }
@@ -160,14 +164,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
   font-weight: bold;
 }
 
 .text-box-delete:hover {
   background: #8C8C9C;
   color: white;
-  transform: scale(1.1);
 }
 
 /* Image Box Styles */
@@ -176,7 +178,6 @@
   border: 2px solid #8C9491;
   box-shadow: 0 2px 8px rgba(42, 47, 51, 0.2);
   z-index: 100;
-  transition: all 0.2s ease;
   cursor: move;
   background: rgba(255, 255, 255, 0.1);
 }
@@ -298,4 +299,23 @@
   background: #FFE066;
   color: #2A2F33;
   transform: scale(1.1);
+}
+
+
+.text-box.selected {
+  border: 2px solid #4A90E2;
+  box-shadow: 0 0 8px rgba(74, 144, 226, 0.6);
+}
+
+.text-box {
+  position: absolute;
+  min-width: 50px;
+  min-height: 20px;
+  cursor: move;
+  background: transparent;
+}
+
+.text-box-content {
+  outline: none;
+  white-space: pre-wrap;
 }
