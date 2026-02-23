@@ -3,7 +3,7 @@
   display: flex;
   flex-direction: column;
   background: #F9F3EF;
-  min-height: 100vh;
+  /* min-height: 10vh; */
 }
 
 .app-header {
@@ -82,7 +82,17 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 4rem 2rem;
+  padding: 0rem 0rem;
+  margin:0;
+}
+.convertToPPT {
+  display: flex;
+  justify-content: center; /* Centers the components horizontally */
+  align-items: center; /* Aligns them vertically in the middle */
+  gap: 40px; /* Adds space between the two components */
+  width: 100%;
+  padding: 20px;
+  box-sizing: border-box;
 }
 
 .upload-btn {

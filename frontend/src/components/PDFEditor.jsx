@@ -4,6 +4,8 @@ import fontkit from '@pdf-lib/fontkit'
 import PDFViewer from './PDFViewer'
 import Toolbar from './Toolbar'
 import './PDFEditor.css'
+import PdfToPptConverter from './PdfToPptConverter'
+import PptToPdfConverter from './PptToPdfConverter'
 
 function PDFEditor() {
   const [pdfFile, setPdfFile] = useState(null)
@@ -1191,6 +1193,7 @@ function PDFEditor() {
         <p>Upload, edit, and download your PDF files</p>
       </header>
       {!pdfFile ? (
+        <>
         <div className="upload-section">
           <input
             type="file"
@@ -1205,7 +1208,13 @@ function PDFEditor() {
           >
             Click to select a PDF file to edit
           </button>
+          <div className='convertToPPT'>
+            <PdfToPptConverter/>
+            <PptToPdfConverter/>
+          </div>
+
         </div>
+        </>
       ) : (
         <>
           <Toolbar
