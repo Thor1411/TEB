@@ -1,6 +1,6 @@
 # PDF Editor Web Application
 
-A full-stack PDF editor built with React and Node.js. Upload PDFs, add text, draw shapes, and download your edited documents.
+A full-stack PDF editor built with React and Node.js. Upload PDFs, add text, draw shapes, and download your edited documents. Also includes quick conversion tools to convert PDFs to images and images to PDF.
 
 ## Project Structure
 
@@ -31,6 +31,8 @@ TEB/
 - Draw rectangles on PDFs
 - Navigate between pages
 - Download edited PDFs
+- Convert PDF to images (PNG format, downloaded as ZIP)
+- Convert multiple images to PDF
 - Modern, responsive UI
 
 ## Getting Started
@@ -39,6 +41,7 @@ TEB/
 
 - Node.js (v18 or higher)
 - npm
+- poppler-utils (for PDF to image conversion)
 
 ### Installation
 
@@ -85,15 +88,22 @@ TEB/
 - **CORS** - Cross-origin resource sharing
 - **Multer** - File upload handling
 - **pdf-lib** - PDF processing
+- **Sharp** - Image processing for conversions
+- **Archiver** - Creating ZIP files for image exports
 
 ## Usage
 
+### PDF Editing
 1. Click "Upload PDF" to select a PDF file
 2. Use the toolbar to:
    - Add text: Click "Add Text", enter text, then click on the PDF
    - Draw rectangle: Click "Rectangle", then click on the PDF
    - Navigate pages: Use previous/next buttons
 3. Download your edited PDF using the "Download" button
+
+### Quick Conversion Tools
+1. **PDF to Images**: Select a PDF file, click "Convert to Images" to download all pages as PNG images in a ZIP file
+2. **Images to PDF**: Select one or multiple images (JPG/PNG), click "Convert to PDF" to combine them into a single PDF
 
 ## Development
 
@@ -122,6 +132,3 @@ npm run build
 # The build output will be in frontend/dist
 ```
 
-## Contributing
-
-Feel free to submit issues and enhancement requests!

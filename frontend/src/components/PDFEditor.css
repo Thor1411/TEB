@@ -119,3 +119,89 @@
   font-size: 0.95rem;
   font-weight: 400;
 }
+.conversion-section {
+  margin-top: 3rem;
+  width: 100%;
+  max-width: 900px;
+  padding: 2.5rem;
+  background: linear-gradient(135deg, rgba(27, 60, 83, 0.05) 0%, rgba(69, 104, 130, 0.05) 100%);
+  border-radius: 8px;
+  border: 2px solid #8C9491;
+}
+
+.conversion-section h3 {
+  font-family: "Oswald", sans-serif;
+  color: #1B3C53;
+  font-size: 1.8rem;
+  margin: 0 0 2rem 0;
+  text-align: center;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.conversion-tool {
+  margin-bottom: 1.5rem;
+  padding: 2rem;
+  background: #ffffff;
+  border-radius: 8px;
+  border: 2px solid #8C9491;
+  box-shadow: 0 2px 8px rgba(27, 60, 83, 0.1);
+}
+
+.conversion-tool:last-child {
+  margin-bottom: 0;
+}
+
+.conversion-tool h4 {
+  font-family: "Montserrat", sans-serif;
+  color: #1B3C53;
+  font-size: 1.1rem;
+  margin: 0 0 1.2rem 0;
+  font-weight: 600;
+}
+
+.conversion-btn {
+  font-family: "Montserrat", sans-serif;
+  background: #456882;
+  color: #D2C1B6;
+  border: 2px solid #8C9491;
+  padding: 1rem 2rem;
+  font-size: 1rem;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  width: 100%;
+  margin-bottom: 1rem;
+}
+
+.conversion-btn:hover {
+  background: #1B3C53;
+  border-color: #8C8C9C;
+  color: #D2C1B6;
+}
+
+.convert-action-btn {
+  font-family: "Montserrat", sans-serif;
+  background: #456882;
+  color: #D2C1B6;
+  border: 2px solid #8C9491;
+  padding: 1rem 2rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.convert-action-btn:hover {
+  background: #1B3C53;
+  border-color: #8C8C9C;
+  color: #D2C1B6;
+}
+
+.convert-action-btn:disabled {
+  background: #8C9491;
+  border-color: #8C9491;
+  cursor: not-allowed;
+  opacity: 0.6;
+}

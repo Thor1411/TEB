@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { PDFDocument, rgb, StandardFonts, degrees } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
+import axios from 'axios'
 import PDFViewer from './PDFViewer'
 import Toolbar from './Toolbar'
 import './PDFEditor.css'
@@ -30,6 +31,13 @@ function PDFEditor() {
   const imageInputRef = useRef(null)
   const [autoFocusTextBoxId, setAutoFocusTextBoxId] = useState(null)
   const fontBytesCacheRef = useRef(new Map())
+  
+  // Conversion feature states
+  const [convertPdfFile, setConvertPdfFile] = useState(null)
+  const [convertImageFiles, setConvertImageFiles] = useState([])
+  const [converting, setConverting] = useState(false)
+  const convertPdfInputRef = useRef(null)
+  const convertImageInputRef = useRef(null)
 
   // Deselect overlays when clicking outside boxes + toolbars
   useEffect(() => {
@@ -1177,6 +1185,115 @@ function PDFEditor() {
     // Only render the ones for the current page
   }
 
+  // PDF to Images conversion
+  const handlePdfToImages = async () => {
+    if (!convertPdfFile) {
+      alert('Please select a PDF file first')
+      return
+    }
+
+    setConverting(true)
+
+    try {
+      const formData = new FormData()
+      formData.append('pdf', convertPdfFile)
+
+      const response = await axios.post('http://localhost:5000/api/pdf-to-images', formData, {
+        responseType: 'blob',
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      })
+
+      const blob = new Blob([response.data], { type: 'application/zip' })
+      const url = window.URL.createObjectURL(blob)
+      
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${convertPdfFile.name.replace('.pdf', '')}_images.zip`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+      
+      alert('PDF converted to images successfully!')
+      setConvertPdfFile(null)
+    } catch (error) {
+      console.error('Error converting PDF:', error)
+      alert('Failed to convert PDF to images. Please try again.')
+    } finally {
+      setConverting(false)
+    }
+  }
+
+  // Images to PDF conversion
+  const handleImagesToPdf = async () => {
+    if (convertImageFiles.length === 0) {
+      alert('Please select at least one image file')
+      return
+    }
+
+    setConverting(true)
+
+    try {
+      const formData = new FormData()
+      convertImageFiles.forEach((file) => {
+        formData.append('images', file)
+      })
+
+      const response = await axios.post('http://localhost:5000/api/images-to-pdf', formData, {
+        responseType: 'blob',
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      })
+
+      const blob = new Blob([response.data], { type: 'application/pdf' })
+      const url = window.URL.createObjectURL(blob)
+      
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'converted.pdf'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+      
+      alert('Images converted to PDF successfully!')
+      setConvertImageFiles([])
+    } catch (error) {
+      console.error('Error converting images:', error)
+      alert('Failed to convert images to PDF. Please try again.')
+    } finally {
+      setConverting(false)
+    }
+  }
+
+  const handleConvertPdfFileSelect = (event) => {
+    const file = event.target.files[0]
+    if (file && file.type === 'application/pdf') {
+      setConvertPdfFile(file)
+    } else {
+      alert('Please select a valid PDF file')
+    }
+  }
+
+  const handleConvertImageFilesSelect = (event) => {
+    const files = Array.from(event.target.files)
+    const validImages = files.filter(file => 
+      file.type === 'image/jpeg' || 
+      file.type === 'image/png' || 
+      file.type === 'image/jpg'
+    )
+    
+    if (validImages.length === 0) {
+      alert('Please select valid image files (JPG, PNG)')
+      return
+    }
+    
+    setConvertImageFiles(validImages)
+  }
+
   return (
     
     <div className="pdf-editor">
@@ -1205,6 +1322,66 @@ function PDFEditor() {
           >
             Click to select a PDF file to edit
           </button>
+          
+          <div className="conversion-section">
+            <h3>Quick Conversion Tools</h3>
+            
+            <div className="conversion-tool">
+              <h4>PDF to Images</h4>
+              <input
+                type="file"
+                accept="application/pdf"
+                onChange={handleConvertPdfFileSelect}
+                ref={convertPdfInputRef}
+                style={{ display: 'none' }}
+              />
+              <button 
+                className="conversion-btn"
+                onClick={() => convertPdfInputRef.current.click()}
+              >
+                {convertPdfFile ? `Selected: ${convertPdfFile.name}` : 'Choose PDF'}
+              </button>
+              {convertPdfFile && (
+                <button 
+                  className="convert-action-btn"
+                  onClick={handlePdfToImages}
+                  disabled={converting}
+                >
+                  {converting ? 'Converting...' : 'Convert to Images'}
+                </button>
+              )}
+            </div>
+            
+            <div className="conversion-tool">
+              <h4>Images to PDF</h4>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/jpg"
+                onChange={handleConvertImageFilesSelect}
+                ref={convertImageInputRef}
+                multiple
+                style={{ display: 'none' }}
+              />
+              <button 
+                className="conversion-btn"
+                onClick={() => convertImageInputRef.current.click()}
+              >
+                {convertImageFiles.length > 0 
+                  ? `Selected: ${convertImageFiles.length} image${convertImageFiles.length > 1 ? 's' : ''}`
+                  : 'Choose Images'
+                }
+              </button>
+              {convertImageFiles.length > 0 && (
+                <button 
+                  className="convert-action-btn"
+                  onClick={handleImagesToPdf}
+                  disabled={converting}
+                >
+                  {converting ? 'Converting...' : 'Convert to PDF'}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       ) : (
         <>
