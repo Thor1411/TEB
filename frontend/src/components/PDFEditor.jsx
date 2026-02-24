@@ -6,6 +6,63 @@ import PDFViewer from './PDFViewer'
 import Toolbar from './Toolbar'
 import './PDFEditor.css'
 
+// Image Preview Item Component for drag and drop reordering
+function ImagePreviewItem({ file, index, onRemove, onReorder }) {
+  const [preview, setPreview] = useState(null)
+  const [isDragging, setIsDragging] = useState(false)
+
+  useEffect(() => {
+    const reader = new FileReader()
+    reader.onload = (e) => setPreview(e.target.result)
+    reader.readAsDataURL(file)
+  }, [file])
+
+  const handleDragStart = (e) => {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', index)
+    setIsDragging(true)
+  }
+
+  const handleDragEnd = () => {
+    setIsDragging(false)
+  }
+
+  const handleDragOver = (e) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+  }
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    const dragIndex = parseInt(e.dataTransfer.getData('text/plain'))
+    if (dragIndex !== index) {
+      onReorder(dragIndex, index)
+    }
+  }
+
+  return (
+    <div
+      className={`image-preview-item ${isDragging ? 'dragging' : ''}`}
+      draggable
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      <div className="image-preview-number">{index + 1}</div>
+      {preview && <img src={preview} alt={file.name} />}
+      <button
+        className="remove-image-btn"
+        onClick={() => onRemove(index)}
+        title="Remove image"
+      >
+        ×
+      </button>
+      <div className="image-preview-name">{file.name}</div>
+    </div>
+  )
+}
+
 function PDFEditor() {
   const [pdfFile, setPdfFile] = useState(null)
   const [pdfDoc, setPdfDoc] = useState(null)
@@ -1294,6 +1351,17 @@ function PDFEditor() {
     setConvertImageFiles(validImages)
   }
 
+  const handleRemoveImage = (index) => {
+    setConvertImageFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const handleReorderImages = (dragIndex, dropIndex) => {
+    const newFiles = [...convertImageFiles]
+    const [draggedFile] = newFiles.splice(dragIndex, 1)
+    newFiles.splice(dropIndex, 0, draggedFile)
+    setConvertImageFiles(newFiles)
+  }
+
   return (
     
     <div className="pdf-editor">
@@ -1371,14 +1439,39 @@ function PDFEditor() {
                   : 'Choose Images'
                 }
               </button>
+              
               {convertImageFiles.length > 0 && (
-                <button 
-                  className="convert-action-btn"
-                  onClick={handleImagesToPdf}
-                  disabled={converting}
-                >
-                  {converting ? 'Converting...' : 'Convert to PDF'}
-                </button>
+                <>
+                  <div className="image-preview-container">
+                    <div className="image-preview-header">
+                      <span>Preview & Reorder (drag to reorder)</span>
+                      <button 
+                        className="clear-images-btn"
+                        onClick={() => setConvertImageFiles([])}
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                    <div className="image-preview-grid">
+                      {convertImageFiles.map((file, index) => (
+                        <ImagePreviewItem
+                          key={`${file.name}-${index}`}
+                          file={file}
+                          index={index}
+                          onRemove={handleRemoveImage}
+                          onReorder={handleReorderImages}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <button 
+                    className="convert-action-btn"
+                    onClick={handleImagesToPdf}
+                    disabled={converting}
+                  >
+                    {converting ? 'Converting...' : 'Convert to PDF'}
+                  </button>
+                </>
               )}
             </div>
           </div>
