@@ -16,12 +16,18 @@ function Toolbar({
   onApplyHighlights,
   hasTextSelections,
   onDownload,
+  onSecureRedact,
+  canSecureRedact,
+  onEmbeddedSign,
+  embeddedSignDisabled,
+  onInspectEmbeddedSignature,
   onUndo,
   canUndo,
   currentPage,
   totalPages,
   onPageChange,
   onUploadNew,
+  onLogout,
   selectedTextId,
   updateSelectedTextBox,
   textBoxes,
@@ -212,11 +218,37 @@ function Toolbar({
       </div>
 
       <div className="toolbar-section">
+        <button
+          className="tool-btn"
+          onClick={onSecureRedact}
+          disabled={!canSecureRedact}
+          title="Burn filled rectangles into the PDF (server-side redaction)"
+        >Secure Redact
+        </button>
+        <button
+          className="tool-btn"
+          onClick={onEmbeddedSign}
+          disabled={embeddedSignDisabled}
+          title="Create an embedded PDF signature (server-side)"
+        >Sign (Embedded)
+        </button>
+        <button
+          className="tool-btn"
+          onClick={onInspectEmbeddedSignature}
+          title="Quick check for an embedded signature marker"
+        >Inspect Signature
+        </button>
         <button 
           className="tool-btn download-btn"
           onClick={onDownload}
           title="Download edited PDF"
         >Download
+        </button>
+        <button
+          className="tool-btn"
+          onClick={onLogout}
+          title="Logout"
+        >Logout
         </button>
       </div>
     </div>

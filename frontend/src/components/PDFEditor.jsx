@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useMemo, useState, useRef, useEffect } from 'react'
 import { PDFDocument, rgb, StandardFonts, degrees } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import axios from 'axios'
@@ -6,9 +6,12 @@ import PDFViewer from './PDFViewer'
 import Toolbar from './Toolbar'
 import './PDFEditor.css'
 
-function PDFEditor() {
+function PDFEditor({ token, onLogout }) {
   const [pdfFile, setPdfFile] = useState(null)
   const [pdfDoc, setPdfDoc] = useState(null)
+  const [docId, setDocId] = useState(null)
+  const [embeddedSigning, setEmbeddedSigning] = useState(false)
+  const [uploadingPdf, setUploadingPdf] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
   const [editMode, setEditMode] = useState(null)
@@ -38,6 +41,28 @@ function PDFEditor() {
   const [converting, setConverting] = useState(false)
   const convertPdfInputRef = useRef(null)
   const convertImageInputRef = useRef(null)
+
+  const api = useMemo(() => {
+    return axios.create({
+      baseURL: '/api',
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    })
+  }, [token])
+
+  useEffect(() => {
+    const id = api.interceptors.response.use(
+      (resp) => resp,
+      (err) => {
+        const status = err?.response?.status
+        if (status === 401) {
+          alert('Session expired or invalid. Please login again.')
+          if (onLogout) onLogout()
+        }
+        return Promise.reject(err)
+      }
+    )
+    return () => api.interceptors.response.eject(id)
+  }, [api, onLogout])
 
   // Deselect overlays when clicking outside boxes + toolbars
   useEffect(() => {
@@ -78,11 +103,40 @@ function PDFEditor() {
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0]
-    if (file && file.type === 'application/pdf') {
-      const arrayBuffer = await file.arrayBuffer()
+    try {
+      const name = String(file?.name || '').toLowerCase()
+      const type = String(file?.type || '').toLowerCase()
+      const looksLikePdf = name.endsWith('.pdf') || type.includes('pdf')
+      if (!file || !looksLikePdf) {
+        alert('Please upload a valid PDF file')
+        return
+      }
+
+      setUploadingPdf(true)
+
+      // Secure workflow: upload to backend (sanitize + encrypt at rest), then download sanitized PDF for editing.
+      const formData = new FormData()
+      formData.append('pdf', file)
+      const createRes = await api.post('/documents', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+
+      const id = createRes.data?.id
+      if (!id) throw new Error('Upload failed: missing document id')
+
+      const downloadRes = await api.get(`/documents/${id}/download`, { responseType: 'arraybuffer' })
+      const bytes = downloadRes.data
+      const blob = new Blob([bytes], { type: 'application/pdf' })
+
+      const arrayBuffer = await blob.arrayBuffer()
       const pdf = await PDFDocument.load(arrayBuffer)
       setPdfDoc(pdf)
-      setPdfFile(URL.createObjectURL(file))
+      const oldUrl = pdfFile
+      const newUrl = URL.createObjectURL(blob)
+      setPdfFile(newUrl)
+      if (oldUrl) setTimeout(() => URL.revokeObjectURL(oldUrl), 100)
+
+      setDocId(id)
       setTotalPages(pdf.getPageCount())
       setCurrentPage(1)
       setUndoStack([])
@@ -97,8 +151,13 @@ function PDFEditor() {
       setSelectedRectangleId(null)
       setSelectedCircleId(null)
       setSelectedLineId(null)
-    } else {
-      alert('Please upload a valid PDF file')
+    } catch (e) {
+      console.error(e)
+      alert(e?.response?.data?.error || e.message || 'Failed to upload PDF')
+    } finally {
+      setUploadingPdf(false)
+      // Reset input so re-uploading same file triggers change
+      event.target.value = ''
     }
   }
 
@@ -1167,12 +1226,166 @@ function PDFEditor() {
     await applyLineBoxesToPdf(exportDoc, lineBoxes)
 
     const pdfBytes = await exportDoc.save()
+
+    // Save a new encrypted/sanitized version to backend before downloading.
+    try {
+      if (docId) {
+        const fd = new FormData()
+        fd.append('pdf', new Blob([pdfBytes], { type: 'application/pdf' }), 'edited.pdf')
+        const res = await api.post(`/documents/${docId}/update`, fd, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+        const newId = res.data?.id
+        if (newId) setDocId(newId)
+      }
+    } catch (e) {
+      console.error(e)
+      alert(e?.response?.data?.error || e.message || 'Failed to save securely (download will still proceed)')
+    }
+
     const blob = new Blob([pdfBytes], { type: 'application/pdf' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
     link.download = 'edited-document.pdf'
     link.click()
+  }
+
+  const handleSecureRedact = async () => {
+    try {
+      if (!docId || !pdfDoc) {
+        alert('No document loaded')
+        return
+      }
+
+      // Treat FILLED black rectangles as redactions.
+      const candidates = rectangleBoxes.filter(b => b?.filled === true)
+      if (candidates.length === 0) {
+        alert('Draw a filled rectangle to redact')
+        return
+      }
+
+      const pages = pdfDoc.getPages()
+      const redactionsByPage = new Map()
+
+      for (const r of candidates) {
+        const pageIndex = (r.page || 1) - 1
+        const page = pages[pageIndex]
+        if (!page) continue
+        const { width, height } = page.getSize()
+
+        const x = (r.pdfX || 0) / width
+        const y = (r.pdfY || 0) / height
+        const w = (r.pdfWidth ?? r.width ?? 0) / width
+        const h = (r.pdfHeight ?? r.height ?? 0) / height
+
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) continue
+        const entry = redactionsByPage.get(r.page) || []
+        entry.push({ x, y, width: w, height: h })
+        redactionsByPage.set(r.page, entry)
+      }
+
+      const redactions = Array.from(redactionsByPage.entries()).map(([page, rects]) => ({ page, rects }))
+      const res = await api.post(`/documents/${docId}/redact`, { redactions })
+      const newId = res.data?.id
+      if (!newId) throw new Error('Redaction failed')
+
+      const downloadRes = await api.get(`/documents/${newId}/download`, { responseType: 'arraybuffer' })
+      const bytes = downloadRes.data
+      const blob = new Blob([bytes], { type: 'application/pdf' })
+      const arrayBuffer = await blob.arrayBuffer()
+      const pdf = await PDFDocument.load(arrayBuffer)
+
+      setDocId(newId)
+      setPdfDoc(pdf)
+      const oldUrl = pdfFile
+      const newUrl = URL.createObjectURL(blob)
+      setPdfFile(newUrl)
+      if (oldUrl) setTimeout(() => URL.revokeObjectURL(oldUrl), 100)
+
+      setTotalPages(pdf.getPageCount())
+      setCurrentPage(1)
+      setUndoStack([])
+      setTextBoxes([])
+      setImageBoxes([])
+      setTextSelections([])
+      setRectangleBoxes([])
+      setCircleBoxes([])
+      setLineBoxes([])
+      setEditMode(null)
+      setSelectedTextId(null)
+      setSelectedRectangleId(null)
+      setSelectedCircleId(null)
+      setSelectedLineId(null)
+    } catch (e) {
+      console.error(e)
+      alert(e?.response?.data?.error || e.message || 'Redaction failed')
+    }
+  }
+
+  const handleEmbeddedSign = async () => {
+    try {
+      if (!docId || !pdfDoc) {
+        alert('No document loaded')
+        return
+      }
+
+      if (embeddedSigning) return
+      setEmbeddedSigning(true)
+
+      const res = await api.post(`/documents/${docId}/sign-embedded`)
+      const newId = res.data?.id
+      if (!newId) throw new Error('Embedded signing failed')
+
+      const downloadRes = await api.get(`/documents/${newId}/download`, { responseType: 'arraybuffer' })
+      const bytes = downloadRes.data
+      const blob = new Blob([bytes], { type: 'application/pdf' })
+      const arrayBuffer = await blob.arrayBuffer()
+      const pdf = await PDFDocument.load(arrayBuffer)
+
+      setDocId(newId)
+      setPdfDoc(pdf)
+      const oldUrl = pdfFile
+      const newUrl = URL.createObjectURL(blob)
+      setPdfFile(newUrl)
+      if (oldUrl) setTimeout(() => URL.revokeObjectURL(oldUrl), 100)
+
+      setTotalPages(pdf.getPageCount())
+      setCurrentPage(1)
+      setUndoStack([])
+      setTextBoxes([])
+      setImageBoxes([])
+      setTextSelections([])
+      setRectangleBoxes([])
+      setCircleBoxes([])
+      setLineBoxes([])
+      setEditMode(null)
+      setSelectedTextId(null)
+      setSelectedRectangleId(null)
+      setSelectedCircleId(null)
+      setSelectedLineId(null)
+    } catch (e) {
+      console.error(e)
+      alert(e?.response?.data?.error || e.message || 'Embedded signing failed')
+    } finally {
+      setEmbeddedSigning(false)
+    }
+  }
+
+  const handleInspectEmbeddedSignature = async () => {
+    try {
+      if (!docId) {
+        alert('No document loaded')
+        return
+      }
+      const res = await api.get(`/documents/${docId}/inspect-embedded-signature`)
+      const inspection = res.data?.inspection
+      if (!inspection) throw new Error('Inspection failed')
+      alert(inspection.looksSigned ? 'Embedded signature detected' : 'No embedded signature detected')
+    } catch (e) {
+      console.error(e)
+      alert(e?.response?.data?.error || e.message || 'Inspection failed')
+    }
   }
 
   const handlePageChange = (direction) => {
@@ -1198,7 +1411,7 @@ function PDFEditor() {
       const formData = new FormData()
       formData.append('pdf', convertPdfFile)
 
-      const response = await axios.post('http://localhost:5000/api/pdf-to-images', formData, {
+      const response = await api.post('/pdf-to-images', formData, {
         responseType: 'blob',
         headers: {
           'Content-Type': 'multipart/form-data'
@@ -1241,7 +1454,7 @@ function PDFEditor() {
         formData.append('images', file)
       })
 
-      const response = await axios.post('http://localhost:5000/api/images-to-pdf', formData, {
+      const response = await api.post('/images-to-pdf', formData, {
         responseType: 'blob',
         headers: {
           'Content-Type': 'multipart/form-data'
@@ -1319,8 +1532,9 @@ function PDFEditor() {
           <button 
             className="upload-btn"
             onClick={() => fileInputRef.current.click()}
+            disabled={uploadingPdf}
           >
-            Click to select a PDF file to edit
+            {uploadingPdf ? 'Uploading & sanitizing…' : 'Click to select a PDF file to edit'}
           </button>
           
           <div className="conversion-section">
@@ -1425,6 +1639,12 @@ function PDFEditor() {
             totalPages={totalPages}
             onPageChange={handlePageChange}
             onUploadNew={() => fileInputRef.current.click()}
+            onSecureRedact={handleSecureRedact}
+            canSecureRedact={rectangleBoxes.some(b => b?.filled === true)}
+            onEmbeddedSign={handleEmbeddedSign}
+            embeddedSignDisabled={embeddedSigning}
+            onInspectEmbeddedSignature={handleInspectEmbeddedSignature}
+            onLogout={onLogout}
           />
           <input
             type="file"
