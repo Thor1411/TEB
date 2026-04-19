@@ -7,9 +7,25 @@ import './App.css'
 function App() {
   const params = new URLSearchParams(window.location.search)
   const isGitTree = params.get('gitTree') === '1'
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
 
-  const [token, setToken] = useState(() => localStorage.getItem('token') || '')
-  const [currentUser, setCurrentUser] = useState(null)
+  const [token, setToken] = useState(() => {
+    const saved = localStorage.getItem('token')
+    return saved && saved !== 'undefined' && saved !== 'null' ? saved : ''
+  })
+  
+  const [currentUser, setCurrentUser] = useState(() => {
+    const saved = localStorage.getItem('token')
+    if (saved && saved !== 'undefined' && saved !== 'null') {
+      try {
+        const payload = JSON.parse(atob(saved.split('.')[1]))
+        return { id: payload.sub, name: payload.name, email: payload.email, roles: payload.roles }
+      } catch (e) {
+        return null
+      }
+    }
+    return null
+  })
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -30,7 +46,7 @@ function App() {
       if (lastValidatedTokenRef.current === token) return
       lastValidatedTokenRef.current = token
       try {
-        const res = await fetch('/api/auth/me', {
+        const res = await fetch(`${API_URL}/api/auth/me`, {
           headers: { Authorization: `Bearer ${token}` }
         })
         if (!res.ok) {
@@ -54,7 +70,7 @@ function App() {
     setLoggingIn(true)
 
     try {
-      const endpoint = isSignMeUp ? '/api/auth/signup' : '/api/auth/login'
+      const endpoint = isSignMeUp ? `${API_URL}/api/auth/signup` : `${API_URL}/api/auth/login`
       const body = isSignMeUp ? { name, email, password } : { email, password }
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -68,8 +84,8 @@ function App() {
         return
       }
 
-      setToken(data.token)
-      setCurrentUser(data.user)
+      setToken(data.token || '')
+      setCurrentUser(data.user || null)
     } catch (err) {
       setError(err?.message || (isSignMeUp ? 'Signup failed' : 'Login failed'))
     } finally {
@@ -86,7 +102,7 @@ function App() {
     try {
       setError('')
       setLoggingIn(true)
-      const res = await fetch('/api/auth/google', {
+      const res = await fetch(`${API_URL}/api/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ credential: credentialResponse.credential })
@@ -98,8 +114,8 @@ function App() {
         return
       }
 
-      setToken(data.token)
-      setCurrentUser(data.user)
+      setToken(data.token || '')
+      setCurrentUser(data.user || null)
     } catch (err) {
       setError(err?.message || 'Google auth failed')
     } finally {
@@ -265,7 +281,6 @@ function App() {
                     <GoogleLogin
                       onSuccess={handleGoogleSuccess}
                       onError={() => setError('Google Login Failed')}
-                      useOneTap
                       theme="filled_blue"
                       shape="rectangular"
                       text={isSignMeUp ? "signup_with" : "signin_with"}

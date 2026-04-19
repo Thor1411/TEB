@@ -99,6 +99,7 @@ export const writeDoc = async ({ docsDir, metaDir }, docId, payload) => {
   const meta = {
     _id: docId,
     ownerId: payload.ownerId,
+    originalName: payload.originalName || 'Untitled Document',
     createdAt: new Date(payload.createdAt),
     updatedAt: new Date(payload.updatedAt),
     pageCount: payload.pageCount,

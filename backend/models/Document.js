@@ -13,6 +13,7 @@ const DocumentSchema = new mongoose.Schema(
   {
     _id: { type: String, required: true }, // UUID
     ownerId: { type: String, required: true, index: true },
+    originalName: { type: String, default: 'Untitled Document' },
     createdAt: { type: Date, required: true },
     updatedAt: { type: Date, required: true },
     pageCount: { type: Number, required: true },

@@ -36,6 +36,7 @@ const formatGitHistory = (git) => {
 function PDFGitTreePage() {
   const params = useMemo(() => new URLSearchParams(window.location.search), [])
   const docId = params.get('docId') || ''
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [text, setText] = useState('Loading…')
@@ -64,7 +65,7 @@ function PDFGitTreePage() {
       }
 
       try {
-        const res = await fetch(`/api/documents/${docId}/git`, {
+        const res = await fetch(`${API_URL}/api/documents/${docId}/git`, {
           headers: { Authorization: `Bearer ${token}` }
         })
         const data = await res.json().catch(() => ({}))

@@ -9,13 +9,19 @@ import './PDFEditor.css'
 function PDFEditor({ token, onLogout, currentUser }) {
   const [pdfFile, setPdfFile] = useState(null)
   const [showProfileMenu, setShowProfileMenu] = useState(false)
+  const [showRecentMenu, setShowRecentMenu] = useState(false)
+  const [recentDocs, setRecentDocs] = useState([])
   const profileMenuRef = useRef(null)
+  const recentMenuRef = useRef(null)
   
   // Close profile menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
         setShowProfileMenu(false)
+      }
+      if (recentMenuRef.current && !recentMenuRef.current.contains(event.target)) {
+        setShowRecentMenu(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -28,6 +34,7 @@ function PDFEditor({ token, onLogout, currentUser }) {
   const [docId, setDocId] = useState(null)
   const [embeddedSigning, setEmbeddedSigning] = useState(false)
   const [uploadingPdf, setUploadingPdf] = useState(false)
+  const [loadingPdf, setLoadingPdf] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
   const [gitEnabled, setGitEnabled] = useState(false)
@@ -61,10 +68,28 @@ function PDFEditor({ token, onLogout, currentUser }) {
   const convertImageInputRef = useRef(null)
 
   const api = useMemo(() => {
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
     return axios.create({
-      baseURL: '/api',
+      baseURL: `${API_URL}/api`,
       headers: token ? { Authorization: `Bearer ${token}` } : {}
     })
+  }, [token])
+
+  const fetchRecentDocs = async () => {
+    try {
+      const res = await api.get('/documents')
+      const docs = res.data.documents || []
+      
+      // Removed the grouping by name so all edits to the same or different files 
+      // are visible, up to 50 items. They are ordered by recently updated by the backend.
+      setRecentDocs(docs.slice(0, 50))
+    } catch (e) {
+      console.error('Failed to fetch recent docs', e)
+    }
+  }
+
+  useEffect(() => {
+    fetchRecentDocs()
   }, [token])
 
   useEffect(() => {
@@ -81,6 +106,37 @@ function PDFEditor({ token, onLogout, currentUser }) {
     )
     return () => api.interceptors.response.eject(id)
   }, [api, onLogout])
+
+  // Load document from URL param
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const docIdParam = params.get('doc')
+    if (docIdParam && !pdfFile) {
+      const loadDoc = async () => {
+        try {
+          setLoadingPdf(true)
+          const downloadRes = await api.get(`/documents/${docIdParam}/download`, { responseType: 'arraybuffer' })
+          const bytes = downloadRes.data
+          const blob = new Blob([bytes], { type: 'application/pdf' })
+          const arrayBuffer = await blob.arrayBuffer()
+          const pdf = await PDFDocument.load(arrayBuffer)
+
+          setDocId(docIdParam)
+          setPdfDoc(pdf)
+          const newUrl = URL.createObjectURL(blob)
+          setPdfFile(newUrl)
+          setTotalPages(pdf.getPageCount())
+          setCurrentPage(1)
+        } catch (err) {
+          console.error(err)
+          alert('Failed to load document. Note: Only the document creator can view this PDF.')
+        } finally {
+          setLoadingPdf(false)
+        }
+      }
+      loadDoc()
+    }
+  }, [api, pdfFile])
 
   // Fetch embedded PDF Git status for the current doc
   useEffect(() => {
@@ -201,6 +257,7 @@ function PDFEditor({ token, onLogout, currentUser }) {
       setSelectedRectangleId(null)
       setSelectedCircleId(null)
       setSelectedLineId(null)
+      fetchRecentDocs()
     } catch (e) {
       console.error(e)
       alert(e?.response?.data?.error || e.message || 'Failed to upload PDF')
@@ -1502,6 +1559,9 @@ function PDFEditor({ token, onLogout, currentUser }) {
         setSelectedRectangleId(null)
         setSelectedCircleId(null)
         setSelectedLineId(null)
+        
+        // Refresh recent docs after saving
+        fetchRecentDocs()
       } catch (e) {
         console.error(e)
         alert(e?.response?.data?.error || e.message || 'Failed to save securely (download will still proceed)')
@@ -1783,13 +1843,15 @@ function PDFEditor({ token, onLogout, currentUser }) {
           </h1>
         </div>
 
-        <div 
-          ref={profileMenuRef}
-          style={{ 
-            position: 'relative',
-            zIndex: 1000
-          }}
-        >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          {/* Profile Menu */}
+          <div 
+            ref={profileMenuRef}
+            style={{ 
+              position: 'relative',
+              zIndex: 1000
+            }}
+          >
           <button
             onClick={() => setShowProfileMenu(!showProfileMenu)}
             style={{
@@ -1867,8 +1929,30 @@ function PDFEditor({ token, onLogout, currentUser }) {
             </div>
           )}
         </div>
+        </div>
       </header>
       {!pdfFile ? (
+        loadingPdf || uploadingPdf ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', width: '100%' }}>
+            <div style={{ color: '#1B3C53', fontSize: '1.8rem', marginBottom: '20px', fontFamily: '"Oswald", sans-serif' }}>
+              {loadingPdf ? 'Loading document...' : 'Uploading & sanitizing...'}
+            </div>
+            <div style={{
+              width: '40px',
+              height: '40px',
+              border: '4px solid rgba(27, 60, 83, 0.2)',
+              borderTop: '4px solid #1B3C53',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite'
+            }}></div>
+            <style>{`
+              @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+              }
+            `}</style>
+          </div>
+        ) : (
         <div className="upload-section">
           <h2 style={{ 
             color: '#1B3C53', 
@@ -1889,9 +1973,9 @@ function PDFEditor({ token, onLogout, currentUser }) {
           <button 
             className="upload-btn"
             onClick={() => fileInputRef.current.click()}
-            disabled={uploadingPdf}
+            disabled={uploadingPdf || loadingPdf}
           >
-            {uploadingPdf ? 'Uploading & sanitizing…' : 'Click to select a PDF file to edit'}
+            {uploadingPdf ? 'Uploading & sanitizing…' : loadingPdf ? 'Loading document…' : 'Click to select a PDF file to edit'}
           </button>
           
           <div className="conversion-section">
@@ -1952,8 +2036,125 @@ function PDFEditor({ token, onLogout, currentUser }) {
                 </button>
               )}
             </div>
+            
+            {/* Recent Edits Menu below quick conversion */}
+            <div style={{ marginTop: '40px', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <div ref={recentMenuRef} style={{ position: 'relative', zIndex: 900 }}>
+                <button
+                  onClick={() => {
+                    setShowRecentMenu(!showRecentMenu)
+                    if (!showRecentMenu) fetchRecentDocs()
+                  }}
+                  style={{
+                    background: '#1B3C53',
+                    color: '#D2C1B6',
+                    border: 'none',
+                    padding: '12px 24px',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontFamily: '"Montserrat", sans-serif',
+                    fontSize: '1.05rem',
+                    fontWeight: '600',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    transition: 'all 0.2s',
+                    boxShadow: '0 4px 12px rgba(27, 60, 83, 0.2)'
+                  }}
+                  title="View Recent Edits"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
+                  </svg>
+                  View Recent Edits
+                </button>
+
+                {showRecentMenu && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    marginTop: '15px',
+                    backgroundColor: 'white',
+                    borderRadius: '8px',
+                    boxShadow: '0 8px 30px rgba(0,0,0,0.15)',
+                    minWidth: '400px',
+                    maxHeight: '350px',
+                    overflowY: 'auto',
+                    border: '1px solid rgba(140, 148, 145, 0.2)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    textAlign: 'left'
+                  }}>
+                    <div style={{
+                      padding: '16px 20px',
+                      borderBottom: '1px solid #eee',
+                      fontWeight: '600',
+                      color: '#1B3C53',
+                      fontFamily: '"Oswald", sans-serif',
+                      fontSize: '1.2rem',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      Your Recent Edits
+                      <span style={{ fontSize: '0.85rem', fontWeight: '400', color: '#8C9491', fontFamily: '"Montserrat", sans-serif' }}>
+                        {recentDocs.length} changes
+                      </span>
+                    </div>
+                    
+                    {recentDocs.length === 0 ? (
+                      <div style={{ padding: '30px', textAlign: 'center', color: '#8C9491', fontSize: '0.95rem' }}>
+                        No recent edits found
+                      </div>
+                    ) : (
+                      recentDocs.map(doc => (
+                        <div 
+                          key={doc._id}
+                          onClick={() => {
+                            window.location.href = `/?doc=${doc._id}`
+                          }}
+                          style={{
+                            padding: '16px 20px',
+                            borderBottom: '1px solid #f5f5f5',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px',
+                            transition: 'background-color 0.2s',
+                            ':hover': {
+                              backgroundColor: '#f8f9fa'
+                            }
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        >
+                          <div style={{ color: '#1B3C53', fontWeight: '600', fontSize: '1.05rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {doc.originalName || 'Untitled Document'}
+                          </div>
+                          <div style={{ color: '#8C9491', fontSize: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                              {new Date(doc.updatedAt).toLocaleDateString()}
+                            </span>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                              {new Date(doc.updatedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
           </div>
         </div>
+        )
       ) : (
         <>
           <Toolbar

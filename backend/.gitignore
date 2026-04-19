@@ -2,3 +2,4 @@ node_modules
 uploads
 *.log
 .env
+secure_storage/

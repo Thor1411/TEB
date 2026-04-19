@@ -328,6 +328,7 @@ app.post('/api/documents', authenticate, upload.single('pdf'), async (req, res) 
     const meta = await writeDoc(vault, docId, {
       bytes: finalBytes,
       ownerId: req.user.id,
+      originalName: req.file?.originalname || 'Untitled Document',
       createdAt: now,
       updatedAt: now,
       pageCount
@@ -412,9 +413,14 @@ app.post('/api/documents/:id/update', authenticate, upload.single('pdf'), async 
 
     const newId = crypto.randomUUID()
     const now = new Date().toISOString()
+    
+    // We reuse the current meta originalName instead of overriding with "edited.pdf"
+    const currentMeta = await readDocMeta(vault, currentId).catch(() => ({}))
+    
     const meta = await writeDoc(vault, newId, {
       bytes: finalBytes,
       ownerId: req.user.id,
+      originalName: req.body?.originalName || currentMeta?.originalName || req.file?.originalname || 'Untitled Document',
       createdAt: now,
       updatedAt: now,
       pageCount,
@@ -498,6 +504,7 @@ app.post('/api/documents/:id/git/init', authenticate, async (req, res) => {
     await writeDoc(vault, newId, {
       bytes: updatedBytes,
       ownerId: req.user.id,
+      originalName: meta.originalName || 'Untitled Document',
       createdAt: now,
       updatedAt: now,
       pageCount: meta.pageCount,
@@ -691,6 +698,7 @@ app.post('/api/documents/:id/sign-embedded', authenticate, async (req, res) => {
     await writeDoc(vault, newId, {
       bytes: signedBytes,
       ownerId: req.user.id,
+      originalName: meta.originalName || 'Untitled Document',
       createdAt: now,
       updatedAt: now,
       pageCount: meta.pageCount,
@@ -794,6 +802,7 @@ app.post('/api/documents/:id/redact', authenticate, async (req, res) => {
     const newMeta = await writeDoc(vault, newId, {
       bytes: redactedBytes,
       ownerId: req.user.id,
+      originalName: meta.originalName || 'Untitled Document',
       createdAt: now,
       updatedAt: now,
       pageCount,
