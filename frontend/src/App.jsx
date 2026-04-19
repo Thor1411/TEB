@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google'
 import PDFEditor from './components/PDFEditor'
+import PDFGitTreePage from './components/PDFGitTreePage'
 import './App.css'
 
 function App() {
+  const params = new URLSearchParams(window.location.search)
+  const isGitTree = params.get('gitTree') === '1'
+
   const [token, setToken] = useState(() => localStorage.getItem('token') || '')
   const [currentUser, setCurrentUser] = useState(null)
   const [name, setName] = useState('')
@@ -106,7 +110,9 @@ function App() {
   return (
     <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || "744678399714-80lch3d91d2bphm2mu0194sunt6sh5ui.apps.googleusercontent.com"}>
       <div className="App">
-        {!token ? (
+        {isGitTree ? (
+          <PDFGitTreePage />
+        ) : !token ? (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#F9F3EF', minHeight: '100vh' }}>
           <header className="app-header" style={{ position: 'relative' }}>
             <h1 className="header-title" style={{ margin: 0 }}>
@@ -295,9 +301,9 @@ function App() {
             </div>
           </div>
         </div>
-      ) : (
-        <PDFEditor token={token} onLogout={handleLogout} currentUser={currentUser} />
-      )}
+        ) : (
+          <PDFEditor token={token} onLogout={handleLogout} currentUser={currentUser} />
+        )}
       </div>
     </GoogleOAuthProvider>
   )

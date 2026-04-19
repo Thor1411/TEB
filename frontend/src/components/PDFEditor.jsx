@@ -30,6 +30,8 @@ function PDFEditor({ token, onLogout, currentUser }) {
   const [uploadingPdf, setUploadingPdf] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
+  const [gitEnabled, setGitEnabled] = useState(false)
+  const [gitSignatureOk, setGitSignatureOk] = useState(null)
   const [editMode, setEditMode] = useState(null)
   const [textContent, setTextContent] = useState('')
   const [fontSize, setFontSize] = useState(16)
@@ -79,6 +81,38 @@ function PDFEditor({ token, onLogout, currentUser }) {
     )
     return () => api.interceptors.response.eject(id)
   }, [api, onLogout])
+
+  // Fetch embedded PDF Git status for the current doc
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      if (!docId) {
+        setGitEnabled(false)
+        setGitSignatureOk(null)
+        return
+      }
+      try {
+        const res = await api.get(`/documents/${docId}/git`)
+        if (cancelled) return
+        const enabled = !!res.data?.enabled
+        setGitEnabled(enabled)
+        if (!enabled) {
+          setGitSignatureOk(null)
+        } else {
+          const sigOk = res.data?.signature?.ok
+          setGitSignatureOk(typeof sigOk === 'boolean' ? sigOk : null)
+        }
+      } catch {
+        if (cancelled) return
+        setGitEnabled(false)
+        setGitSignatureOk(null)
+      }
+    }
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [api, docId])
 
   // Deselect overlays when clicking outside boxes + toolbars
   useEffect(() => {
@@ -133,9 +167,7 @@ function PDFEditor({ token, onLogout, currentUser }) {
       // Secure workflow: upload to backend (sanitize + encrypt at rest), then download sanitized PDF for editing.
       const formData = new FormData()
       formData.append('pdf', file)
-      const createRes = await api.post('/documents', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
+      const createRes = await api.post('/documents', formData)
 
       const id = createRes.data?.id
       if (!id) throw new Error('Upload failed: missing document id')
@@ -155,6 +187,8 @@ function PDFEditor({ token, onLogout, currentUser }) {
       setDocId(id)
       setTotalPages(pdf.getPageCount())
       setCurrentPage(1)
+      setGitEnabled(false)
+      setGitSignatureOk(null)
       setUndoStack([])
       setTextBoxes([])
       setImageBoxes([])
@@ -174,6 +208,189 @@ function PDFEditor({ token, onLogout, currentUser }) {
       setUploadingPdf(false)
       // Reset input so re-uploading same file triggers change
       event.target.value = ''
+    }
+  }
+
+  const handleGitInit = async () => {
+    try {
+      if (!docId) {
+        alert('No document loaded')
+        return
+      }
+      const res = await api.post(`/documents/${docId}/git/init`)
+      const newId = res.data?.id
+      if (!newId) throw new Error('Init failed')
+
+      const downloadRes = await api.get(`/documents/${newId}/download`, { responseType: 'arraybuffer' })
+      const bytes = downloadRes.data
+      const blob = new Blob([bytes], { type: 'application/pdf' })
+      const arrayBuffer = await blob.arrayBuffer()
+      const pdf = await PDFDocument.load(arrayBuffer)
+
+      setDocId(newId)
+      setPdfDoc(pdf)
+      const oldUrl = pdfFile
+      const newUrl = URL.createObjectURL(blob)
+      setPdfFile(newUrl)
+      if (oldUrl) setTimeout(() => URL.revokeObjectURL(oldUrl), 100)
+
+      setTotalPages(pdf.getPageCount())
+      setCurrentPage(1)
+      setUndoStack([])
+      setTextBoxes([])
+      setImageBoxes([])
+      setTextSelections([])
+      setRectangleBoxes([])
+      setCircleBoxes([])
+      setLineBoxes([])
+      setEditMode(null)
+      setSelectedTextId(null)
+      setSelectedRectangleId(null)
+      setSelectedCircleId(null)
+      setSelectedLineId(null)
+      alert('PDF Git initialized and embedded into the PDF')
+    } catch (e) {
+      console.error(e)
+      alert(e?.response?.data?.error || e.message || 'Failed to initialize PDF Git')
+    }
+  }
+
+  const formatGitHistory = (git) => {
+    if (!git?.head || !git?.commits) return 'No history'
+    const lines = []
+    const headShort = String(git.head).slice(0, 8)
+    lines.push(`Repo: ${git.repoId || 'unknown'}`)
+    lines.push(`HEAD -> main (${headShort})`)
+    lines.push('')
+
+    const seen = new Set()
+    let cur = git.head
+    let n = 0
+    while (cur && git.commits[cur] && !seen.has(cur) && n < 30) {
+      seen.add(cur)
+      const c = git.commits[cur]
+      const actor = c.actor?.email || c.actor?.id || 'unknown'
+      const short = String(c.id || cur).slice(0, 8)
+      lines.push(`o ${short}  ${c.message}`)
+      lines.push(`|  ${c.ts}  by ${actor}`)
+      if (Array.isArray(c.actions) && c.actions.length > 0) {
+        for (const a of c.actions.slice(0, 8)) {
+          const page = a.page ? ` page=${a.page}` : ''
+          const txt = a.text ? ` text=${JSON.stringify(String(a.text).slice(0, 80))}` : ''
+          lines.push(`|  - ${a.type}${page}${txt}`)
+        }
+        if (c.actions.length > 8) lines.push('  - ...')
+      }
+      lines.push('|')
+      cur = c.parent
+      n++
+    }
+    return lines.join('\n')
+  }
+
+  const handleGitHistory = async (historyWindow) => {
+    if (!docId) {
+      alert('No document loaded')
+      return
+    }
+
+    // Prefer a window opened synchronously by the click handler.
+    const w = historyWindow || window.open('', '_blank', 'noopener,noreferrer')
+    if (!w) return
+
+    const writePage = ({ title, subtitle, body }) => {
+      const safeTitle = String(title || 'PDF Git').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      const safeSubtitle = String(subtitle || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      const safeBody = String(body || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+      w.document.open()
+      w.document.write(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${safeTitle}</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+      header { padding: 16px 18px; border-bottom: 1px solid rgba(127,127,127,0.25); }
+      h1 { margin: 0; font-size: 18px; }
+      .sub { margin-top: 6px; opacity: 0.8; font-size: 13px; }
+      main { padding: 16px 18px; }
+      pre { white-space: pre-wrap; word-break: break-word; line-height: 1.35; font-size: 13px; }
+      .hint { opacity: 0.75; font-size: 12px; margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>${safeTitle}</h1>
+      ${safeSubtitle ? `<div class="sub">${safeSubtitle}</div>` : ''}
+    </header>
+    <main>
+      <pre>${safeBody}</pre>
+      <div class="hint">This view is generated by TEB from embedded PDF metadata.</div>
+    </main>
+  </body>
+</html>`)
+      w.document.close()
+    }
+
+    writePage({
+      title: 'PDF Git — History tree',
+      subtitle: `Document: ${docId}`,
+      body: 'Loading…'
+    })
+
+    try {
+      const res = await api.get(`/documents/${docId}/git`)
+      if (!res.data?.enabled) {
+        writePage({
+          title: 'PDF Git — History tree',
+          subtitle: `Document: ${docId}`,
+          body: 'PDF Git is not initialized for this PDF.'
+        })
+        return
+      }
+
+      const sig = res.data?.signature
+      const sigLine = typeof sig?.ok === 'boolean'
+        ? `Signature: ${sig.ok ? 'OK' : 'FAIL'}${sig.error ? ` (${sig.error})` : ''}`
+        : 'Signature: unknown'
+
+      writePage({
+        title: 'PDF Git — History tree',
+        subtitle: `${sigLine}`,
+        body: formatGitHistory(res.data.git)
+      })
+    } catch (e) {
+      console.error(e)
+      writePage({
+        title: 'PDF Git — History tree',
+        subtitle: `Document: ${docId}`,
+        body: e?.response?.data?.error || e.message || 'Failed to load PDF Git history'
+      })
+    }
+  }
+
+  const handleGitVerify = async () => {
+    try {
+      if (!docId) {
+        alert('No document loaded')
+        return
+      }
+      const res = await api.get(`/documents/${docId}/git/verify`)
+      const ok = !!res.data?.ok
+      const modified = Array.isArray(res.data?.modifiedPages) ? res.data.modifiedPages : []
+      const sigOk = res.data?.signature?.ok
+      const sigMsg = typeof sigOk === 'boolean' ? `Signature: ${sigOk ? 'OK' : 'FAIL'}` : 'Signature: unknown'
+      if (ok) {
+        alert(`PDF Git verification OK\n${sigMsg}`)
+      } else {
+        alert(`PDF was modified outside authorized flow\nModified pages: ${modified.join(', ') || 'unknown'}\n${sigMsg}`)
+      }
+    } catch (e) {
+      console.error(e)
+      alert(e?.response?.data?.error || e.message || 'Verification failed')
     }
   }
 
@@ -1228,8 +1445,7 @@ function PDFEditor({ token, onLogout, currentUser }) {
   const handleDownload = async () => {
     if (!pdfDoc) return
 
-    // Export-only: bake overlays into a temporary copy of the PDF for download.
-    // Keep editor state (text boxes / images / highlights) unchanged.
+    // Export: bake overlays into a temporary copy of the PDF for download.
     const exportBytes = await pdfDoc.save()
     const exportDoc = await PDFDocument.load(exportBytes)
 
@@ -1243,28 +1459,63 @@ function PDFEditor({ token, onLogout, currentUser }) {
 
     const pdfBytes = await exportDoc.save()
 
-    // Save a new encrypted/sanitized version to backend before downloading.
-    try {
-      if (docId) {
+    let downloadBytes = pdfBytes
+
+    // Persist to secure backend storage by creating a new version, then download the saved bytes.
+    // After a successful save, reload that saved version into the editor so the visible PDF,
+    // the active docId, and the Git metadata all refer to the same document.
+    if (docId) {
+      try {
         const fd = new FormData()
         fd.append('pdf', new Blob([pdfBytes], { type: 'application/pdf' }), 'edited.pdf')
-        const res = await api.post(`/documents/${docId}/update`, fd, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        })
+
+        const res = await api.post(`/documents/${docId}/update`, fd)
         const newId = res.data?.id
-        if (newId) setDocId(newId)
+        if (!newId) throw new Error('Update failed')
+
+        const downloadRes = await api.get(`/documents/${newId}/download`, { responseType: 'arraybuffer' })
+        downloadBytes = downloadRes.data
+
+        // Refresh editor state to the newly stored, sanitized PDF version.
+        const blob = new Blob([downloadBytes], { type: 'application/pdf' })
+        const arrayBuffer = await blob.arrayBuffer()
+        const pdf = await PDFDocument.load(arrayBuffer)
+
+        setDocId(newId)
+        setPdfDoc(pdf)
+        const oldUrl = pdfFile
+        const newUrl = URL.createObjectURL(blob)
+        setPdfFile(newUrl)
+        if (oldUrl) setTimeout(() => URL.revokeObjectURL(oldUrl), 100)
+
+        setTotalPages(pdf.getPageCount())
+        setCurrentPage(1)
+        setUndoStack([])
+        setTextBoxes([])
+        setImageBoxes([])
+        setTextSelections([])
+        setRectangleBoxes([])
+        setCircleBoxes([])
+        setLineBoxes([])
+        setEditMode(null)
+        setSelectedTextId(null)
+        setSelectedRectangleId(null)
+        setSelectedCircleId(null)
+        setSelectedLineId(null)
+      } catch (e) {
+        console.error(e)
+        alert(e?.response?.data?.error || e.message || 'Failed to save securely (download will still proceed)')
       }
-    } catch (e) {
-      console.error(e)
-      alert(e?.response?.data?.error || e.message || 'Failed to save securely (download will still proceed)')
     }
 
-    const blob = new Blob([pdfBytes], { type: 'application/pdf' })
+    const blob = new Blob([downloadBytes], { type: 'application/pdf' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
     link.download = 'edited-document.pdf'
     link.click()
+
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
   }
 
   const handleSecureRedact = async () => {
@@ -1428,10 +1679,7 @@ function PDFEditor({ token, onLogout, currentUser }) {
       formData.append('pdf', convertPdfFile)
 
       const response = await api.post('/pdf-to-images', formData, {
-        responseType: 'blob',
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
+        responseType: 'blob'
       })
 
       const blob = new Blob([response.data], { type: 'application/zip' })
@@ -1471,10 +1719,7 @@ function PDFEditor({ token, onLogout, currentUser }) {
       })
 
       const response = await api.post('/images-to-pdf', formData, {
-        responseType: 'blob',
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
+        responseType: 'blob'
       })
 
       const blob = new Blob([response.data], { type: 'application/pdf' })
@@ -1757,6 +2002,12 @@ function PDFEditor({ token, onLogout, currentUser }) {
             embeddedSignDisabled={embeddedSigning}
             onInspectEmbeddedSignature={handleInspectEmbeddedSignature}
             onLogout={onLogout}
+            gitEnabled={gitEnabled}
+            gitSignatureOk={gitSignatureOk}
+            gitDocId={docId}
+            onGitInit={handleGitInit}
+            onGitHistory={handleGitHistory}
+            onGitVerify={handleGitVerify}
           />
           <input
             type="file"

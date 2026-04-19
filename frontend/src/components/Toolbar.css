@@ -150,6 +150,62 @@
   justify-content: center;
 }
 
+.git-menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.git-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 190px;
+  background: #1B3C53;
+  border: 1px solid rgba(210, 193, 182, 0.35);
+  border-radius: 8px;
+  padding: 0.35rem;
+  z-index: 50;
+}
+
+.git-item {
+  width: 100%;
+  text-align: left;
+  padding: 0.65rem 0.8rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #D2C1B6;
+  font-family: "Montserrat", sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.git-link {
+  display: block;
+  text-decoration: none;
+}
+
+.git-item:hover:not(:disabled) {
+  border-color: rgba(210, 193, 182, 0.45);
+}
+
+.git-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.git-status {
+  padding: 0.5rem 0.8rem 0.35rem;
+  color: #BBB6A5;
+  font-family: "Montserrat", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-top: 1px solid rgba(210, 193, 182, 0.18);
+  margin-top: 0.25rem;
+}
+
 .secondary-toolbar {
   width: 100%;
   background: #1B3C53;

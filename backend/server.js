@@ -9,7 +9,6 @@ import archiver from 'archiver'
 import crypto from 'crypto'
 import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
-import { spawn } from 'child_process'
 import sharp from 'sharp'
 import bcrypt from 'bcryptjs'
 
@@ -21,6 +20,10 @@ import { signPdfBytes, verifyPdfBytes } from './lib/signature.js'
 import { inspectEmbeddedSignature, signPdfEmbedded } from './lib/embeddedSignature.js'
 import { connectDb } from './lib/db.js'
 import { validatePdfWithQpdf } from './lib/validate.js'
+import { runPdftoppmPng } from './lib/pdftoppm.js'
+import { readPdfGit, writePdfGit, createEmptyGitRepo, appendGitCommit } from './lib/pdfGit.js'
+import { computePagePixelHashes } from './lib/pageHashes.js'
+import { signGit, verifyGitSignature } from './lib/gitSigning.js'
 
 const app = express()
 const PORT = 5000
@@ -95,37 +98,14 @@ const ensureUploadDir = async () => {
   await fs.mkdir(UPLOAD_DIR, { recursive: true })
 }
 
-const runPdftoppmPng = async ({ pdfPath, outputPrefix, timeoutMs }) => {
-  // Never invoke via shell. `pdftoppm` is from poppler-utils.
-  await new Promise((resolve, reject) => {
-    const child = spawn('pdftoppm', ['-png', pdfPath, outputPrefix], {
-      shell: false,
-      windowsHide: true,
-      stdio: ['ignore', 'ignore', 'pipe']
-    })
-
-    let stderr = ''
-    child.stderr?.on('data', (d) => {
-      stderr += d.toString()
-      if (stderr.length > 10_000) stderr = stderr.slice(-10_000)
-    })
-
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL')
-      reject(new Error('pdftoppm timed out'))
-    }, timeoutMs)
-
-    child.on('error', (err) => {
-      clearTimeout(timer)
-      reject(err)
-    })
-
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      if (code === 0) return resolve()
-      reject(new Error(`pdftoppm failed (code ${code}): ${stderr || 'unknown error'}`))
-    })
-  })
+const parseJsonField = (raw, fallback = null) => {
+  if (raw == null) return fallback
+  if (typeof raw !== 'string') return fallback
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return fallback
+  }
 }
 
 // Middleware
@@ -308,6 +288,9 @@ app.post('/api/documents', authenticate, upload.single('pdf'), async (req, res) 
     tempPath = req.file.path
     const inBytes = await fs.readFile(tempPath)
 
+    // If the PDF already contains TEB Git metadata, preserve it across sanitization.
+    const incomingGit = await readPdfGit(inBytes).catch(() => ({ git: null }))
+
     const validation = await validatePdfWithQpdf({ pdfBytes: inBytes, workDir: WORK_DIR })
     if (!validation.ok) {
       return res.status(400).json({ error: `PDF failed structural validation: ${validation.error}` })
@@ -320,10 +303,30 @@ app.post('/api/documents', authenticate, upload.single('pdf'), async (req, res) 
       maxPages: MAX_SANITIZE_PAGES
     })
 
+    let finalBytes = safeBytes
+    if (incomingGit?.git?.tebPdfGit === true) {
+      const pageHashes = await computePagePixelHashes({
+        pdfBytes: safeBytes,
+        workDir: WORK_DIR,
+        timeoutMs: PDFTOPPM_TIMEOUT_MS
+      })
+
+      const actor = { id: req.user.id, name: req.user.name, email: req.user.email }
+      const nextGit = appendGitCommit({
+        git: incomingGit.git,
+        actor,
+        message: 'Import + sanitize',
+        actions: [{ type: 'import+sanitize', pageCount }],
+        pageHashes
+      })
+      nextGit.signature = signGit(nextGit)
+      finalBytes = await writePdfGit(safeBytes, nextGit)
+    }
+
     const docId = crypto.randomUUID()
     const now = new Date().toISOString()
     const meta = await writeDoc(vault, docId, {
-      bytes: safeBytes,
+      bytes: finalBytes,
       ownerId: req.user.id,
       createdAt: now,
       updatedAt: now,
@@ -370,10 +373,47 @@ app.post('/api/documents/:id/update', authenticate, upload.single('pdf'), async 
       maxPages: MAX_SANITIZE_PAGES
     })
 
+    // Preserve/advance embedded PDF Git metadata across sanitization.
+    // Sanitization rasterizes the PDF (dropping attachments), so if the *current* version
+    // has PDF Git initialized we must re-embed it into the sanitized output.
+    let finalBytes = safeBytes
+    const gitActions = parseJsonField(req.body?.gitActions, null)
+    const gitMessage = typeof req.body?.gitMessage === 'string' ? req.body.gitMessage : null
+    const gitInitIfMissing = String(req.body?.gitInitIfMissing || '').toLowerCase() === 'true'
+
+    const { bytes: currentBytes } = await readDocBytes(vault, currentId)
+    const { git: existingGit } = await readPdfGit(currentBytes).catch(() => ({ git: null }))
+    const actor = { id: req.user.id, name: req.user.name, email: req.user.email }
+
+    // By default: if the document already has PDF Git, keep it alive by appending a commit.
+    // Optionally: allow initializing Git during update with gitInitIfMissing=true.
+    let git = existingGit
+    if (!git && gitInitIfMissing) {
+      git = createEmptyGitRepo({ actor, pageCount })
+    }
+
+    if (git?.tebPdfGit === true) {
+      const pageHashes = await computePagePixelHashes({
+        pdfBytes: safeBytes,
+        workDir: WORK_DIR,
+        timeoutMs: PDFTOPPM_TIMEOUT_MS
+      })
+
+      const nextGit = appendGitCommit({
+        git,
+        actor,
+        message: gitMessage || 'Edit PDF',
+        actions: Array.isArray(gitActions) ? gitActions : [{ type: 'edit', pageCount }],
+        pageHashes
+      })
+      nextGit.signature = signGit(nextGit)
+      finalBytes = await writePdfGit(safeBytes, nextGit)
+    }
+
     const newId = crypto.randomUUID()
     const now = new Date().toISOString()
     const meta = await writeDoc(vault, newId, {
-      bytes: safeBytes,
+      bytes: finalBytes,
       ownerId: req.user.id,
       createdAt: now,
       updatedAt: now,
@@ -402,6 +442,122 @@ app.post('/api/documents/:id/update', authenticate, upload.single('pdf'), async 
     return res.status(500).json({ error: e.message })
   } finally {
     if (tempPath) await fs.unlink(tempPath).catch(() => {})
+  }
+})
+
+app.get('/api/documents/:id/git', authenticate, async (req, res) => {
+  try {
+    const docId = req.params.id
+    if (!isSafeDocId(docId)) return res.status(400).json({ error: 'Invalid document id' })
+    const { meta, bytes } = await readDocBytes(vault, docId)
+    if (meta.ownerId !== req.user.id) return res.status(403).json({ error: 'Forbidden' })
+
+    const { git } = await readPdfGit(bytes)
+    if (!git) return res.json({ enabled: false })
+
+    const sig = verifyGitSignature(git, { trustedPublicKeyPem: process.env.PDF_GIT_TRUSTED_PUBLIC_KEY_PEM || null })
+    return res.json({ enabled: true, git, signature: sig })
+  } catch (e) {
+    return res.status(500).json({ error: e.message })
+  }
+})
+
+app.post('/api/documents/:id/git/init', authenticate, async (req, res) => {
+  try {
+    const docId = req.params.id
+    if (!isSafeDocId(docId)) return res.status(400).json({ error: 'Invalid document id' })
+
+    const { meta, bytes } = await readDocBytes(vault, docId)
+    if (meta.ownerId !== req.user.id) return res.status(403).json({ error: 'Forbidden' })
+
+    const { git: existingGit } = await readPdfGit(bytes).catch(() => ({ git: null }))
+    if (existingGit?.tebPdfGit === true) {
+      return res.status(409).json({ error: 'PDF Git already initialized' })
+    }
+
+    const actor = { id: req.user.id, name: req.user.name, email: req.user.email }
+    const git = createEmptyGitRepo({ actor, pageCount: meta.pageCount })
+    const pageHashes = await computePagePixelHashes({
+      pdfBytes: bytes,
+      workDir: WORK_DIR,
+      timeoutMs: PDFTOPPM_TIMEOUT_MS
+    })
+    const nextGit = appendGitCommit({
+      git,
+      actor,
+      message: 'Baseline snapshot',
+      actions: [{ type: 'baseline', pageCount: meta.pageCount }],
+      pageHashes
+    })
+    nextGit.signature = signGit(nextGit)
+
+    const updatedBytes = await writePdfGit(bytes, nextGit)
+
+    const newId = crypto.randomUUID()
+    const now = new Date().toISOString()
+    await writeDoc(vault, newId, {
+      bytes: updatedBytes,
+      ownerId: req.user.id,
+      createdAt: now,
+      updatedAt: now,
+      pageCount: meta.pageCount,
+      parentId: docId
+    })
+
+    await appendAuditEvent({
+      auditDir: vault.auditDir,
+      docId: newId,
+      actor: req.user.id,
+      action: 'git-init',
+      details: { parentId: docId }
+    })
+
+    return res.json({ id: newId })
+  } catch (e) {
+    return res.status(500).json({ error: e.message })
+  }
+})
+
+app.get('/api/documents/:id/git/verify', authenticate, async (req, res) => {
+  try {
+    const docId = req.params.id
+    if (!isSafeDocId(docId)) return res.status(400).json({ error: 'Invalid document id' })
+    const { meta, bytes } = await readDocBytes(vault, docId)
+    if (meta.ownerId !== req.user.id) return res.status(403).json({ error: 'Forbidden' })
+
+    const { git } = await readPdfGit(bytes)
+    if (!git?.tebPdfGit) return res.status(404).json({ error: 'No PDF Git metadata found' })
+
+    const sig = verifyGitSignature(git, { trustedPublicKeyPem: process.env.PDF_GIT_TRUSTED_PUBLIC_KEY_PEM || null })
+
+    const head = git?.commits?.[git?.head]
+    if (!head) return res.status(400).json({ error: 'Invalid git metadata: missing HEAD commit' })
+
+    const expected = Array.isArray(head.pageHashes) ? head.pageHashes : []
+    const actual = await computePagePixelHashes({
+      pdfBytes: bytes,
+      workDir: WORK_DIR,
+      timeoutMs: PDFTOPPM_TIMEOUT_MS
+    })
+
+    const modifiedPages = []
+    const byPageExpected = new Map(expected.map(e => [e.page, e]))
+    for (const a of actual) {
+      const e = byPageExpected.get(a.page)
+      if (!e || e.digest !== a.digest || e.alg !== a.alg) {
+        modifiedPages.push(a.page)
+      }
+    }
+
+    const ok = modifiedPages.length === 0
+    return res.json({
+      ok,
+      modifiedPages,
+      signature: sig,
+      head: { id: head.id, ts: head.ts, message: head.message, actor: head.actor }
+    })
+  } catch (e) {
+    return res.status(500).json({ error: e.message })
   }
 })
 

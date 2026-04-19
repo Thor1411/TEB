@@ -1,5 +1,5 @@
 import './Toolbar.css'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 function Toolbar({
   editMode,
@@ -46,9 +46,17 @@ function Toolbar({
   lineBoxes,
   updateSelectedLineBox,
   onDeselectLine,
-  onRemoveLineBox
+  onRemoveLineBox,
+  gitEnabled,
+  gitSignatureOk,
+  gitDocId,
+  onGitInit,
+  onGitHistory,
+  onGitVerify
 }) {
   const [showDrawTools, setShowDrawTools] = useState(false)
+  const [showGitMenu, setShowGitMenu] = useState(false)
+  const gitMenuRef = useRef(null)
 
   const selectedBox = selectedTextId != null
     ? textBoxes.find(b => b.id === selectedTextId)
@@ -91,6 +99,21 @@ function Toolbar({
       setShowDrawTools(false)
     }
   }, [editMode])
+
+  // Close Git menu on outside click
+  useEffect(() => {
+    if (!showGitMenu) return
+
+    const onDown = (e) => {
+      const el = e.target instanceof Element ? e.target : null
+      if (!el) return
+      if (gitMenuRef.current && gitMenuRef.current.contains(el)) return
+      setShowGitMenu(false)
+    }
+
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [showGitMenu])
 
   return (
     <>
@@ -225,6 +248,67 @@ function Toolbar({
           title="Burn filled rectangles into the PDF (server-side redaction)"
         >Secure Redact
         </button>
+        <div className="git-menu" ref={gitMenuRef}>
+          <button
+            className={`tool-btn ${showGitMenu ? 'active' : ''}`}
+            onClick={() => setShowGitMenu(v => !v)}
+            title="PDF Git options"
+          >Git
+          </button>
+
+          {showGitMenu && (
+            <div className="git-dropdown" role="menu">
+              <button
+                className="git-item"
+                onClick={() => {
+                  setShowGitMenu(false)
+                  if (gitEnabled) return
+                  onGitInit?.()
+                }}
+                disabled={gitEnabled}
+                title={gitEnabled ? 'Already initialized' : 'Initialize PDF Git metadata inside this PDF'}
+              >Init
+              </button>
+
+              {gitEnabled && gitDocId ? (
+                <a
+                  className="git-item git-link"
+                  href={`/?gitTree=1&docId=${encodeURIComponent(gitDocId)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setShowGitMenu(false)}
+                  title="Open history tree in a new tab"
+                >History tree
+                </a>
+              ) : (
+                <button
+                  className="git-item"
+                  disabled
+                  title="Initialize PDF Git first"
+                >History tree
+                </button>
+              )}
+
+              <button
+                className="git-item"
+                onClick={() => {
+                  setShowGitMenu(false)
+                  onGitVerify?.()
+                }}
+                disabled={!gitEnabled}
+                title="Verify tampering (page hash mismatch)"
+              >Verify tampering
+              </button>
+
+              <div className="git-status" aria-hidden="true">
+                {gitEnabled ? 'Enabled' : 'Not initialized'}
+                {gitEnabled && typeof gitSignatureOk === 'boolean'
+                  ? ` • Signature: ${gitSignatureOk ? 'OK' : 'FAIL'}`
+                  : ''}
+              </div>
+            </div>
+          )}
+        </div>
         <button
           className="tool-btn"
           onClick={onEmbeddedSign}
