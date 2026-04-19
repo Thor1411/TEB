@@ -6,8 +6,24 @@ import PDFViewer from './PDFViewer'
 import Toolbar from './Toolbar'
 import './PDFEditor.css'
 
-function PDFEditor({ token, onLogout }) {
+function PDFEditor({ token, onLogout, currentUser }) {
   const [pdfFile, setPdfFile] = useState(null)
+  const [showProfileMenu, setShowProfileMenu] = useState(false)
+  const profileMenuRef = useRef(null)
+  
+  // Close profile menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
+        setShowProfileMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [])
+
   const [pdfDoc, setPdfDoc] = useState(null)
   const [docId, setDocId] = useState(null)
   const [embeddedSigning, setEmbeddedSigning] = useState(false)
@@ -1508,20 +1524,116 @@ function PDFEditor({ token, onLogout }) {
   }
 
   return (
-    
     <div className="pdf-editor">
-      <header className={`app-header ${pdfFile ? "small" : ""}`}>
-        <h1 className="header-title">
-          <img 
-          src="/images/iitr_logo.png" 
-          alt="Logo" 
-          className="header-logo"
-          />
-        PDF Editor</h1>
-        <p>Upload, edit, and download your PDF files</p>
+      <header className="app-header small" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', boxSizing: 'border-box', borderBottom: '1px solid rgba(140, 148, 145, 0.3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <h1 className="header-title" style={{ margin: 0, color: '#D2C1B6', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <img 
+              src="/images/iitr_logo.png" 
+              alt="Logo" 
+              className="header-logo"
+              style={{ width: '22px', height: '22px' }}
+            />
+            PDF Editor
+          </h1>
+        </div>
+
+        <div 
+          ref={profileMenuRef}
+          style={{ 
+            position: 'relative',
+            zIndex: 1000
+          }}
+        >
+          <button
+            onClick={() => setShowProfileMenu(!showProfileMenu)}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '8px',
+              borderRadius: '50%',
+              backgroundColor: 'rgba(210, 193, 182, 0.1)',
+              transition: 'background-color 0.2s',
+            }}
+            title="Profile Menu"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#D2C1B6" strokeWidth="2" strokeLinecap="round" strokeLinelinejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+          </button>
+
+          {showProfileMenu && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: '10px',
+              backgroundColor: '#ffffff',
+              borderRadius: '8px',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              minWidth: '200px',
+              padding: '1rem',
+              textAlign: 'left',
+              border: '1px solid #8C9491',
+              fontFamily: '"Montserrat", sans-serif'
+            }}>
+              <div style={{ 
+                borderBottom: '1px solid rgba(140, 148, 145, 0.3)', 
+                paddingBottom: '0.8rem',
+                marginBottom: '0.8rem'
+              }}>
+                <div style={{ color: '#1B3C53', fontWeight: '700', fontSize: '1.1rem', marginBottom: '0.2rem' }}>
+                  {currentUser?.name || 'User'}
+                </div>
+                <div style={{ color: '#456882', fontSize: '0.85rem' }}>
+                  {currentUser?.email || ''}
+                </div>
+              </div>
+              <button
+                onClick={onLogout}
+                style={{
+                  width: '100%',
+                  backgroundColor: '#dc3545',
+                  color: 'white',
+                  border: 'none',
+                  padding: '10px',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold',
+                  fontFamily: '"Montserrat", sans-serif',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px'
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinelinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                  <polyline points="16 17 21 12 16 7"></polyline>
+                  <line x1="21" y1="12" x2="9" y2="12"></line>
+                </svg>
+                Logout
+              </button>
+            </div>
+          )}
+        </div>
       </header>
       {!pdfFile ? (
         <div className="upload-section">
+          <h2 style={{ 
+            color: '#1B3C53', 
+            fontFamily: '"Oswald", sans-serif', 
+            fontSize: '2.5rem', 
+            marginBottom: '2rem',
+            marginTop: 0
+          }}>
+            Hi, {currentUser?.name || currentUser?.email || 'User'}
+          </h2>
           <input
             type="file"
             accept="application/pdf"
