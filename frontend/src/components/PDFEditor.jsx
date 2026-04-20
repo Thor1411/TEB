@@ -58,9 +58,13 @@ function PDFEditor({ token, onLogout, currentUser }) {
   // Conversion feature states
   const [convertPdfFile, setConvertPdfFile] = useState(null)
   const [convertImageFiles, setConvertImageFiles] = useState([])
+  const [mergePdfFiles, setMergePdfFiles] = useState([])
+  const [pptFile, setPptFile] = useState(null)
   const [converting, setConverting] = useState(false)
   const convertPdfInputRef = useRef(null)
   const convertImageInputRef = useRef(null)
+  const mergePdfInputRef = useRef(null)
+  const pptInputRef = useRef(null)
 
   const api = useMemo(() => {
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
@@ -1835,6 +1839,123 @@ function PDFEditor({ token, onLogout, currentUser }) {
     setConvertImageFiles(validImages)
   }
 
+  // PDF Merge
+  const handleMergePdfFilesSelect = (event) => {
+    const files = Array.from(event.target.files || [])
+    const validPdfs = files.filter((file) => {
+      const name = String(file?.name || '').toLowerCase()
+      const type = String(file?.type || '').toLowerCase()
+      return type.includes('pdf') || name.endsWith('.pdf')
+    })
+
+    if (validPdfs.length < 2) {
+      alert('Please select at least 2 PDF files')
+      setMergePdfFiles([])
+      return
+    }
+
+    setMergePdfFiles(validPdfs)
+  }
+
+  const moveMergePdfFile = (fromIndex, toIndex) => {
+    setMergePdfFiles((prev) => {
+      if (!Array.isArray(prev)) return prev
+      if (fromIndex < 0 || toIndex < 0) return prev
+      if (fromIndex >= prev.length || toIndex >= prev.length) return prev
+      if (fromIndex === toIndex) return prev
+
+      const next = [...prev]
+      const [item] = next.splice(fromIndex, 1)
+      next.splice(toIndex, 0, item)
+      return next
+    })
+  }
+
+  const handleMergePdfs = async () => {
+    if (mergePdfFiles.length < 2) {
+      alert('Please select at least 2 PDF files')
+      return
+    }
+
+    setConverting(true)
+    try {
+      const formData = new FormData()
+      mergePdfFiles.forEach((file) => formData.append('pdfs', file))
+
+      const response = await api.post('/merge-pdfs', formData, {
+        responseType: 'blob'
+      })
+
+      const blob = new Blob([response.data], { type: 'application/pdf' })
+      const url = window.URL.createObjectURL(blob)
+
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'merged.pdf'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+
+      alert('PDFs merged successfully!')
+      setMergePdfFiles([])
+    } catch (error) {
+      console.error('Error merging PDFs:', error)
+      alert(error?.response?.data?.error || 'Failed to merge PDFs. Please try again.')
+    } finally {
+      setConverting(false)
+    }
+  }
+
+  // PPT to PDF
+  const handlePptFileSelect = (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const name = String(file.name || '').toLowerCase()
+    if (!name.endsWith('.ppt') && !name.endsWith('.pptx')) {
+      alert('Please select a PPT or PPTX file')
+      setPptFile(null)
+      return
+    }
+    setPptFile(file)
+  }
+
+  const handlePptToPdf = async () => {
+    if (!pptFile) {
+      alert('Please select a PPT/PPTX file first')
+      return
+    }
+
+    setConverting(true)
+    try {
+      const formData = new FormData()
+      formData.append('ppt', pptFile)
+
+      const response = await api.post('/ppt-to-pdf', formData, {
+        responseType: 'blob'
+      })
+
+      const blob = new Blob([response.data], { type: 'application/pdf' })
+      const url = window.URL.createObjectURL(blob)
+
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${pptFile.name.replace(/\.(pptx|ppt)$/i, '')}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+
+      alert('PPT converted to PDF successfully!')
+      setPptFile(null)
+    } catch (error) {
+      console.error('Error converting PPT to PDF:', error)
+      alert(error?.response?.data?.error || 'Failed to convert PPT to PDF. Please try again.')
+    } finally {
+      setConverting(false)
+    }
+  }
+
   return (
     <div className="pdf-editor">
       <header className="app-header small" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', boxSizing: 'border-box', borderBottom: '1px solid rgba(140, 148, 145, 0.3)' }}>
@@ -2038,6 +2159,98 @@ function PDFEditor({ token, onLogout, currentUser }) {
                   <button 
                     className="convert-action-btn"
                     onClick={handleImagesToPdf}
+                    disabled={converting}
+                  >
+                    {converting ? 'Converting...' : 'Convert to PDF'}
+                  </button>
+                )}
+              </div>
+
+              <div className="conversion-tool">
+                <h4>Merge PDFs</h4>
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={handleMergePdfFilesSelect}
+                  ref={mergePdfInputRef}
+                  multiple
+                  style={{ display: 'none' }}
+                />
+                <button
+                  className="conversion-btn"
+                  onClick={() => mergePdfInputRef.current.click()}
+                >
+                  {mergePdfFiles.length > 0
+                    ? `Selected: ${mergePdfFiles.length} PDF${mergePdfFiles.length > 1 ? 's' : ''}`
+                    : 'Choose PDFs'
+                  }
+                </button>
+
+                {mergePdfFiles.length > 0 && (
+                  <div className="merge-order">
+                    <div className="merge-order-title">Order</div>
+                    <div className="merge-order-list">
+                      {mergePdfFiles.map((file, index) => (
+                        <div className="merge-order-item" key={`${file.name}-${index}`}>
+                          <div className="merge-order-name" title={file.name}>
+                            {index + 1}. {file.name}
+                          </div>
+                          <div className="merge-order-controls">
+                            <button
+                              type="button"
+                              className="merge-order-btn"
+                              onClick={() => moveMergePdfFile(index, index - 1)}
+                              disabled={converting || index === 0}
+                              title="Move up"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              className="merge-order-btn"
+                              onClick={() => moveMergePdfFile(index, index + 1)}
+                              disabled={converting || index === mergePdfFiles.length - 1}
+                              title="Move down"
+                            >
+                              ↓
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {mergePdfFiles.length > 0 && (
+                  <button
+                    className="convert-action-btn"
+                    onClick={handleMergePdfs}
+                    disabled={converting}
+                  >
+                    {converting ? 'Merging...' : 'Merge PDFs'}
+                  </button>
+                )}
+              </div>
+
+              <div className="conversion-tool">
+                <h4>PPT to PDF</h4>
+                <input
+                  type="file"
+                  accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                  onChange={handlePptFileSelect}
+                  ref={pptInputRef}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  className="conversion-btn"
+                  onClick={() => pptInputRef.current.click()}
+                >
+                  {pptFile ? `Selected: ${pptFile.name}` : 'Choose PPT'}
+                </button>
+                {pptFile && (
+                  <button
+                    className="convert-action-btn"
+                    onClick={handlePptToPdf}
                     disabled={converting}
                   >
                     {converting ? 'Converting...' : 'Convert to PDF'}

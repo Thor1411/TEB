@@ -122,7 +122,7 @@
 .conversion-section {
   margin-top: 2rem;
   width: 100%;
-  max-width: 900px;
+  max-width: 1200px;
   padding: 1.75rem;
   background: #F9F3EF;
   border-radius: 0px;
@@ -141,9 +141,10 @@
 
 .conversion-tools-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
   gap: 1.5rem;
   align-items: start;
+  justify-items: center;
 }
 
 .conversion-tools-grid .conversion-tool {
@@ -156,12 +157,24 @@
   }
 }
 
+@media (max-width: 1100px) {
+  .conversion-tools-grid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+}
+
 .conversion-tool {
   margin-bottom: 1rem;
-  padding: 1rem 1.25rem;
+  padding: 0.75rem 0.75rem;
   background: #F9F3EF;
   border-radius: 0px;
   border: 0px solid #8C9491;
+  width: 100%;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
 }
 
 .conversion-tool:last-child {
@@ -174,6 +187,9 @@
   font-size: 1.1rem;
   margin: 0 0 0.6rem 0;
   font-weight: 600;
+  text-align: center;
+  width: 100%;
+  line-height: 1.2;
 }
 
 .conversion-btn {
@@ -181,13 +197,16 @@
   background: #456882;
   color: #D2C1B6;
   border: 2px solid #8C9491;
-  padding: 1rem 2rem;
-  font-size: 1rem;
+  padding: 1rem 1.25rem;
+  font-size: 0.92rem;
   font-weight: 500;
   border-radius: 4px;
   cursor: pointer;
   width: 100%;
   margin-bottom: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .conversion-btn:hover {
@@ -201,12 +220,15 @@
   background: #456882;
   color: #D2C1B6;
   border: 2px solid #8C9491;
-  padding: 1rem 2rem;
-  font-size: 1rem;
+  padding: 1rem 1.25rem;
+  font-size: 0.92rem;
   font-weight: 600;
   border-radius: 4px;
   cursor: pointer;
   width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .convert-action-btn:hover {
@@ -220,6 +242,83 @@
   border-color: #8C9491;
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+/* Merge order controls */
+.merge-order {
+  width: 100%;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.merge-order-title {
+  font-family: "Montserrat", sans-serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #1B3C53;
+  text-align: left;
+  width: 100%;
+  margin-bottom: 0.35rem;
+}
+
+.merge-order-list {
+  width: 100%;
+  border: 1px solid rgba(140, 148, 145, 0.35);
+  border-radius: 4px;
+  max-height: 120px;
+  overflow: auto;
+  background: #F9F3EF;
+}
+
+.merge-order-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid rgba(140, 148, 145, 0.2);
+}
+
+.merge-order-item:last-child {
+  border-bottom: none;
+}
+
+.merge-order-name {
+  font-family: "Montserrat", sans-serif;
+  font-size: 0.82rem;
+  color: #2A2F33;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  flex: 1;
+  text-align: left;
+}
+
+.merge-order-controls {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.merge-order-btn {
+  font-family: "Montserrat", sans-serif;
+  background: transparent;
+  color: #456882;
+  border: 1px solid #456882;
+  width: 28px;
+  height: 26px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.merge-order-btn:hover {
+  background: #456882;
+  color: #D2C1B6;
+}
+
+.merge-order-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Image Preview Styles */

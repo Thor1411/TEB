@@ -11,6 +11,7 @@ import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
 import sharp from 'sharp'
 import bcrypt from 'bcryptjs'
+import { spawn } from 'child_process'
 
 import { authenticate, getUsers, getUserByEmail, createUser, signAccessToken, ensureAdminUser } from './lib/auth.js'
 import { appendAuditEvent, readAuditLog, verifyAuditLog } from './lib/audit.js'
@@ -188,6 +189,86 @@ const conversionUpload = multer({
     }
   }
 })
+
+// Multer config for office conversions (PPT/PPTX)
+const officeUpload = multer({
+  storage,
+  limits: {
+    fileSize: Math.max(MAX_PDF_BYTES, 25 * 1024 * 1024),
+    files: 1
+  },
+  fileFilter: (req, file, cb) => {
+    const mime = String(file?.mimetype || '').toLowerCase()
+    const name = String(file?.originalname || '').toLowerCase()
+
+    const isPpt = name.endsWith('.ppt') || name.endsWith('.pptx')
+    const isPptMime = [
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'application/octet-stream'
+    ].includes(mime)
+
+    if (isPpt || isPptMime) return cb(null, true)
+    return cb(new Error('Only PPT/PPTX files are allowed'))
+  }
+})
+
+const runLibreOfficeConvertToPdf = async ({ inputPath, outDir, timeoutMs }) => {
+  const candidates = ['libreoffice', 'soffice']
+
+  const tryRun = (cmd) => new Promise((resolve, reject) => {
+    const args = [
+      '--headless',
+      '--nologo',
+      '--nofirststartwizard',
+      '--norestore',
+      '--convert-to', 'pdf',
+      '--outdir', outDir,
+      inputPath
+    ]
+
+    const child = spawn(cmd, args, { shell: false, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+
+    let stderr = ''
+    child.stderr?.on('data', (d) => {
+      stderr += d.toString()
+      if (stderr.length > 20_000) stderr = stderr.slice(-20_000)
+    })
+
+    const timer = timeoutMs ? setTimeout(() => {
+      child.kill('SIGKILL')
+      reject(new Error(`${cmd} timed out`))
+    }, timeoutMs) : null
+
+    child.on('error', (err) => {
+      if (timer) clearTimeout(timer)
+      reject(err)
+    })
+
+    child.on('close', (code) => {
+      if (timer) clearTimeout(timer)
+      if (code === 0) return resolve()
+      reject(new Error(`${cmd} failed (code ${code}): ${stderr || 'unknown error'}`))
+    })
+  })
+
+  let lastErr = null
+  for (const cmd of candidates) {
+    try {
+      await tryRun(cmd)
+      return
+    } catch (e) {
+      lastErr = e
+      // ENOENT => binary not installed; try next candidate.
+      if (e?.code === 'ENOENT') continue
+    }
+  }
+
+  if (lastErr?.code === 'ENOENT') {
+    throw new Error('LibreOffice is not installed (expected `libreoffice` or `soffice`). Install LibreOffice to enable PPT→PDF conversion.')
+  }
+  throw lastErr || new Error('LibreOffice conversion failed')
+}
 
 // Routes
 app.get('/', (req, res) => {
@@ -1059,6 +1140,108 @@ app.post('/api/images-to-pdf', authenticate, conversionUpload.array('images', 50
     }
     
     res.status(500).json({ error: 'Failed to convert images to PDF: ' + error.message })
+  }
+})
+
+// Merge PDFs
+app.post('/api/merge-pdfs', authenticate, conversionUpload.array('pdfs', 20), async (req, res) => {
+  let tempFiles = []
+
+  try {
+    if (!req.files || req.files.length < 2) {
+      return res.status(400).json({ error: 'Upload at least 2 PDF files to merge' })
+    }
+
+    const pdfFiles = req.files.filter(f => {
+      const name = String(f?.originalname || '').toLowerCase()
+      const mime = String(f?.mimetype || '').toLowerCase()
+      return mime.includes('pdf') || name.endsWith('.pdf')
+    })
+
+    if (pdfFiles.length < 2) {
+      return res.status(400).json({ error: 'Only PDF files are allowed for merging' })
+    }
+
+    tempFiles = pdfFiles.map(f => f.path)
+
+    const merged = await PDFDocument.create()
+    for (const file of pdfFiles) {
+      const bytes = await fs.readFile(file.path)
+      const src = await PDFDocument.load(bytes, { ignoreEncryption: true })
+      const copied = await merged.copyPages(src, src.getPageIndices())
+      copied.forEach(p => merged.addPage(p))
+    }
+
+    const mergedBytes = await merged.save()
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', 'attachment; filename=merged.pdf')
+    res.send(Buffer.from(mergedBytes))
+
+    setTimeout(async () => {
+      for (const file of tempFiles) {
+        await fs.unlink(file).catch(() => {})
+      }
+    }, 1000)
+  } catch (error) {
+    console.error('Error merging PDFs:', error)
+    for (const file of tempFiles) {
+      await fs.unlink(file).catch(() => {})
+    }
+    res.status(500).json({ error: 'Failed to merge PDFs: ' + (error?.message || String(error)) })
+  }
+})
+
+// PPT/PPTX to PDF conversion (requires LibreOffice/soffice installed)
+app.post('/api/ppt-to-pdf', authenticate, officeUpload.single('ppt'), async (req, res) => {
+  let tempFiles = []
+  let outputDir = null
+
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No PPT/PPTX file uploaded' })
+    }
+
+    const inputPath = req.file.path
+    tempFiles.push(inputPath)
+
+    outputDir = path.join(UPLOAD_DIR, `temp-${crypto.randomUUID()}`)
+    await fs.mkdir(outputDir, { recursive: true })
+
+    await runLibreOfficeConvertToPdf({
+      inputPath,
+      outDir: outputDir,
+      timeoutMs: Number(process.env.PPTTOPDF_TIMEOUT_MS || 120_000)
+    })
+
+    const outFiles = await fs.readdir(outputDir)
+    const pdfCandidates = outFiles.filter(f => f.toLowerCase().endsWith('.pdf'))
+    if (pdfCandidates.length === 0) {
+      throw new Error('No PDF was generated from the PPT/PPTX')
+    }
+
+    // Pick the newest PDF if there are multiple.
+    const pdfWithStats = await Promise.all(pdfCandidates.map(async (f) => {
+      const p = path.join(outputDir, f)
+      const st = await fs.stat(p)
+      return { f, p, mtimeMs: st.mtimeMs }
+    }))
+    pdfWithStats.sort((a, b) => b.mtimeMs - a.mtimeMs)
+    const outPdfPath = pdfWithStats[0].p
+
+    const pdfBytes = await fs.readFile(outPdfPath)
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', 'attachment; filename=converted.pdf')
+    res.send(Buffer.from(pdfBytes))
+
+    setTimeout(async () => {
+      if (outputDir) await fs.rm(outputDir, { recursive: true, force: true }).catch(() => {})
+      for (const file of tempFiles) await fs.unlink(file).catch(() => {})
+    }, 1500)
+  } catch (error) {
+    console.error('Error converting PPT to PDF:', error)
+    if (outputDir) await fs.rm(outputDir, { recursive: true, force: true }).catch(() => {})
+    for (const file of tempFiles) await fs.unlink(file).catch(() => {})
+    res.status(500).json({ error: 'Failed to convert PPT to PDF: ' + (error?.message || String(error)) })
   }
 })
 
