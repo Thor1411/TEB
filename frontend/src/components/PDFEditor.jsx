@@ -9,19 +9,14 @@ import './PDFEditor.css'
 function PDFEditor({ token, onLogout, currentUser }) {
   const [pdfFile, setPdfFile] = useState(null)
   const [showProfileMenu, setShowProfileMenu] = useState(false)
-  const [showRecentMenu, setShowRecentMenu] = useState(false)
   const [recentDocs, setRecentDocs] = useState([])
   const profileMenuRef = useRef(null)
-  const recentMenuRef = useRef(null)
   
   // Close profile menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
         setShowProfileMenu(false)
-      }
-      if (recentMenuRef.current && !recentMenuRef.current.contains(event.target)) {
-        setShowRecentMenu(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -81,8 +76,8 @@ function PDFEditor({ token, onLogout, currentUser }) {
       const docs = res.data.documents || []
       
       // Removed the grouping by name so all edits to the same or different files 
-      // are visible, up to 50 items. They are ordered by recently updated by the backend.
-      setRecentDocs(docs.slice(0, 50))
+      // are visible, limited to the 5 most recent items. They are ordered by recently updated by the backend.
+      setRecentDocs(docs.slice(0, 5))
     } catch (e) {
       console.error('Failed to fetch recent docs', e)
     }
@@ -1992,176 +1987,118 @@ function PDFEditor({ token, onLogout, currentUser }) {
           
           <div className="conversion-section">
             <h3>Quick Conversion Tools</h3>
-            
-            <div className="conversion-tool">
-              <h4>PDF to Images</h4>
-              <input
-                type="file"
-                accept="application/pdf"
-                onChange={handleConvertPdfFileSelect}
-                ref={convertPdfInputRef}
-                style={{ display: 'none' }}
-              />
-              <button 
-                className="conversion-btn"
-                onClick={() => convertPdfInputRef.current.click()}
-              >
-                {convertPdfFile ? `Selected: ${convertPdfFile.name}` : 'Choose PDF'}
-              </button>
-              {convertPdfFile && (
-                <button 
-                  className="convert-action-btn"
-                  onClick={handlePdfToImages}
-                  disabled={converting}
-                >
-                  {converting ? 'Converting...' : 'Convert to Images'}
-                </button>
-              )}
-            </div>
-            
-            <div className="conversion-tool">
-              <h4>Images to PDF</h4>
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/jpg"
-                onChange={handleConvertImageFilesSelect}
-                ref={convertImageInputRef}
-                multiple
-                style={{ display: 'none' }}
-              />
-              <button 
-                className="conversion-btn"
-                onClick={() => convertImageInputRef.current.click()}
-              >
-                {convertImageFiles.length > 0 
-                  ? `Selected: ${convertImageFiles.length} image${convertImageFiles.length > 1 ? 's' : ''}`
-                  : 'Choose Images'
-                }
-              </button>
-              {convertImageFiles.length > 0 && (
-                <button 
-                  className="convert-action-btn"
-                  onClick={handleImagesToPdf}
-                  disabled={converting}
-                >
-                  {converting ? 'Converting...' : 'Convert to PDF'}
-                </button>
-              )}
-            </div>
-            
-            {/* Recent Edits Menu below quick conversion */}
-            <div style={{ marginTop: '40px', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <div ref={recentMenuRef} style={{ position: 'relative', zIndex: 900 }}>
-                <button
-                  onClick={() => {
-                    setShowRecentMenu(!showRecentMenu)
-                    if (!showRecentMenu) fetchRecentDocs()
-                  }}
-                  style={{
-                    background: '#1B3C53',
-                    color: '#D2C1B6',
-                    border: 'none',
-                    padding: '12px 24px',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontFamily: '"Montserrat", sans-serif',
-                    fontSize: '1.05rem',
-                    fontWeight: '600',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    transition: 'all 0.2s',
-                    boxShadow: '0 4px 12px rgba(27, 60, 83, 0.2)'
-                  }}
-                  title="View Recent Edits"
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <polyline points="12 6 12 12 16 14"></polyline>
-                  </svg>
-                  View Recent Edits
-                </button>
 
-                {showRecentMenu && (
-                  <div style={{
-                    position: 'absolute',
-                    top: '100%',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    marginTop: '15px',
-                    backgroundColor: 'white',
-                    borderRadius: '8px',
-                    boxShadow: '0 8px 30px rgba(0,0,0,0.15)',
-                    minWidth: '400px',
-                    maxHeight: '350px',
-                    overflowY: 'auto',
-                    border: '1px solid rgba(140, 148, 145, 0.2)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    textAlign: 'left'
-                  }}>
-                    <div style={{
-                      padding: '16px 20px',
-                      borderBottom: '1px solid #eee',
-                      fontWeight: '600',
-                      color: '#1B3C53',
-                      fontFamily: '"Oswald", sans-serif',
-                      fontSize: '1.2rem',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
-                    }}>
-                      Your Recent Edits
-                      <span style={{ fontSize: '0.85rem', fontWeight: '400', color: '#8C9491', fontFamily: '"Montserrat", sans-serif' }}>
-                        {recentDocs.length} changes
-                      </span>
-                    </div>
-                    
-                    {recentDocs.length === 0 ? (
-                      <div style={{ padding: '30px', textAlign: 'center', color: '#8C9491', fontSize: '0.95rem' }}>
-                        No recent edits found
-                      </div>
-                    ) : (
-                      recentDocs.map(doc => (
-                        <div 
-                          key={doc._id}
-                          onClick={() => {
-                            window.location.href = `/?doc=${doc._id}`
-                          }}
-                          style={{
-                            padding: '16px 20px',
-                            borderBottom: '1px solid #f5f5f5',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '8px',
-                            transition: 'background-color 0.2s',
-                            ':hover': {
-                              backgroundColor: '#f8f9fa'
-                            }
-                          }}
-                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8f9fa'}
-                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                        >
-                          <div style={{ color: '#1B3C53', fontWeight: '600', fontSize: '1.05rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {doc.originalName || 'Untitled Document'}
-                          </div>
-                          <div style={{ color: '#8C9491', fontSize: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                              {new Date(doc.updatedAt).toLocaleDateString()}
-                            </span>
-                            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                              {new Date(doc.updatedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                            </span>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
+            <div className="conversion-tools-grid">
+              <div className="conversion-tool">
+                <h4>PDF to Images</h4>
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={handleConvertPdfFileSelect}
+                  ref={convertPdfInputRef}
+                  style={{ display: 'none' }}
+                />
+                <button 
+                  className="conversion-btn"
+                  onClick={() => convertPdfInputRef.current.click()}
+                >
+                  {convertPdfFile ? `Selected: ${convertPdfFile.name}` : 'Choose PDF'}
+                </button>
+                {convertPdfFile && (
+                  <button 
+                    className="convert-action-btn"
+                    onClick={handlePdfToImages}
+                    disabled={converting}
+                  >
+                    {converting ? 'Converting...' : 'Convert to Images'}
+                  </button>
                 )}
               </div>
+
+              <div className="conversion-tool">
+                <h4>Images to PDF</h4>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/jpg"
+                  onChange={handleConvertImageFilesSelect}
+                  ref={convertImageInputRef}
+                  multiple
+                  style={{ display: 'none' }}
+                />
+                <button 
+                  className="conversion-btn"
+                  onClick={() => convertImageInputRef.current.click()}
+                >
+                  {convertImageFiles.length > 0 
+                    ? `Selected: ${convertImageFiles.length} image${convertImageFiles.length > 1 ? 's' : ''}`
+                    : 'Choose Images'
+                  }
+                </button>
+                {convertImageFiles.length > 0 && (
+                  <button 
+                    className="convert-action-btn"
+                    onClick={handleImagesToPdf}
+                    disabled={converting}
+                  >
+                    {converting ? 'Converting...' : 'Convert to PDF'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div style={{ marginTop: '24px', width: '100%' }}>
+              <div style={{
+                padding: '16px 20px',
+                borderBottom: '1px solid #eee',
+                fontWeight: '600',
+                color: '#1B3C53',
+                fontFamily: '"Oswald", sans-serif',
+                fontSize: '1.2rem',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                Recent PDFs
+                <span style={{ fontSize: '0.85rem', fontWeight: '400', color: '#8C9491', fontFamily: '"Montserrat", sans-serif' }}>
+                  {recentDocs.length} shown
+                </span>
+              </div>
+
+              {recentDocs.length === 0 ? (
+                <div style={{ padding: '22px 20px', textAlign: 'center', color: '#8C9491', fontSize: '0.95rem' }}>
+                  No recent PDFs found
+                </div>
+              ) : (
+                <div style={{ border: '1px solid rgba(140, 148, 145, 0.2)' }}>
+                  {recentDocs.map(doc => (
+                    <div
+                      key={doc._id}
+                      onClick={() => {
+                        window.location.href = `/?doc=${doc._id}`
+                      }}
+                      style={{
+                        padding: '14px 20px',
+                        borderBottom: '1px solid #f5f5f5',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                        transition: 'background-color 0.2s'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                    >
+                      <div style={{ color: '#1B3C53', fontWeight: '600', fontSize: '1.02rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {doc.originalName || 'Untitled Document'}
+                      </div>
+                      <div style={{ color: '#8C9491', fontSize: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>{new Date(doc.updatedAt).toLocaleDateString()}</span>
+                        <span>{new Date(doc.updatedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
           </div>
