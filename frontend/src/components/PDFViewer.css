@@ -79,7 +79,8 @@
 
 .drag-selection.highlight-drag {
   border: 2px dashed #FFE066;
-  background: rgba(255, 224, 102, 0.3);
+  background: rgba(255, 224, 102, 0.75);
+  mix-blend-mode: multiply;
 }
 
 .edit-hint {
@@ -426,7 +427,7 @@
 }
 
 .text-layer span::selection {
-  background: rgba(0, 123, 255, 0.3);
+  background: rgba(255, 224, 102, 0.6);
 }
 
 /* Text Selection Highlights */
@@ -436,10 +437,11 @@
 
 .text-selection-highlight {
   position: absolute;
-  background: rgba(255, 255, 0, 0.3);
-  border: 1px dashed rgba(255, 200, 0, 0.5);
+  background: rgba(255, 224, 102, 0.75);
+  border: 1px solid rgba(255, 224, 102, 0.75);
   z-index: 95;
   pointer-events: none;
+  mix-blend-mode: multiply;
 }
 
 .selection-delete {

@@ -227,14 +227,6 @@ function Toolbar({
           title="Select text to highlight"
         >Select & Highlight
         </button>
-        {hasTextSelections && (
-          <button
-            className="tool-btn apply-highlight-btn"
-            onClick={onApplyHighlights}
-            title="Apply all text highlights to PDF"
-          >Apply Highlights
-          </button>
-        )}
       </div>
 
       

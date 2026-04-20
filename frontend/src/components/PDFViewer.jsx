@@ -6,10 +6,11 @@ import './PDFViewer.css'
 // Set up the worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
-function PDFViewer({
+function PDFViewer({ 
   pdfFile,
   currentPage,
   editMode,
+  fetchOcrForPage,
   textBoxes,
   imageBoxes,
   textSelections,
@@ -73,6 +74,25 @@ function PDFViewer({
   const lineEndpointDragRef = useRef(null)
   const [draggingLineBoxId, setDraggingLineBoxId] = useState(null)
   const [scale] = useState(1.5)
+
+  const toDisplayRectFromPdfRect = (pdfRect) => {
+    const scales = getCanvasPdfScales()
+    if (!scales) return null
+
+    const x = (pdfRect.x ?? pdfRect.pdfX)
+    const y = (pdfRect.y ?? pdfRect.pdfY)
+    const width = (pdfRect.width ?? pdfRect.pdfWidth)
+    const height = (pdfRect.height ?? pdfRect.pdfHeight)
+
+    if (![x, y, width, height].every(Number.isFinite)) return null
+
+    return {
+      x: x / scales.pdfScaleX,
+      y: y / scales.pdfScaleY,
+      width: width / scales.pdfScaleX,
+      height: height / scales.pdfScaleY
+    }
+  }
 
   const getCanvasPdfScales = () => {
     const canvas = canvasRef.current
@@ -1042,30 +1062,95 @@ function PDFViewer({
       if (!selection || selection.isCollapsed || selection.rangeCount === 0) return
 
       const range = selection.getRangeAt(0)
-      const rects = range.getClientRects()
+      const rects = Array.from(range.getClientRects ? range.getClientRects() : [])
       
       if (rects.length === 0) return
 
       const canvas = canvasRef.current
-      const canvasRect = canvas.getBoundingClientRect()
+      if (!canvas) return
+
+      const scales = getCanvasPdfScales()
+      if (!scales) return
+      const canvasRect = scales.rect
+
+      const mergeSelectionRects = (inputRects) => {
+        const rel = inputRects
+          .map((r) => ({
+            left: r.left - canvasRect.left,
+            top: r.top - canvasRect.top,
+            right: r.right - canvasRect.left,
+            bottom: r.bottom - canvasRect.top
+          }))
+          .filter((r) => Number.isFinite(r.left) && Number.isFinite(r.top) && Number.isFinite(r.right) && Number.isFinite(r.bottom))
+          .filter((r) => (r.right - r.left) > 0.5 && (r.bottom - r.top) > 0.5)
+
+        if (rel.length <= 1) return rel
+
+        // Group by line using the vertical center.
+        const lineTol = 6
+        const lines = []
+        for (const r of rel) {
+          const cy = (r.top + r.bottom) / 2
+          let line = lines.find((l) => Math.abs(l.cy - cy) <= lineTol)
+          if (!line) {
+            line = { cy, rects: [] }
+            lines.push(line)
+          }
+          line.rects.push(r)
+        }
+
+        const merged = []
+        for (const line of lines) {
+          const rs = line.rects.sort((a, b) => a.left - b.left)
+
+          // Dynamic gap tolerance so adjacent words become a continuous highlight.
+          // Use line height as a proxy for font size / space width.
+          const heights = rs.map(r => r.bottom - r.top).filter(h => Number.isFinite(h) && h > 0)
+          heights.sort((a, b) => a - b)
+          const medianHeight = heights.length ? heights[Math.floor(heights.length / 2)] : 10
+          const gapTol = Math.max(4, Math.min(18, medianHeight * 0.9))
+
+          let cur = null
+          for (const r of rs) {
+            if (!cur) {
+              cur = { ...r }
+              continue
+            }
+
+            if (r.left <= cur.right + gapTol) {
+              cur.right = Math.max(cur.right, r.right)
+              cur.top = Math.min(cur.top, r.top)
+              cur.bottom = Math.max(cur.bottom, r.bottom)
+            } else {
+              merged.push(cur)
+              cur = { ...r }
+            }
+          }
+          if (cur) merged.push(cur)
+        }
+
+        return merged
+      }
+
+      const mergedRects = mergeSelectionRects(rects)
       
       // Convert selection rectangles to PDF coordinates
       const selectionRects = []
-      for (let i = 0; i < rects.length; i++) {
-        const rect = rects[i]
-        const x = rect.left - canvasRect.left
-        const y = rect.top - canvasRect.top
-        const width = rect.width
-        const height = rect.height
+      for (let i = 0; i < mergedRects.length; i++) {
+        const rect = mergedRects[i]
+        // Small padding (in display px) so highlights fully cover glyphs.
+        const padX = 1.5
+        const padY = 1.0
 
-        // Convert to PDF coordinates
-        const scaleX = canvas.width / canvasRect.width
-        const scaleY = canvas.height / canvasRect.height
-        
-        const pdfX = (x * scaleX) / scale
-        const pdfY = (y * scaleY) / scale
-        const pdfWidth = (width * scaleX) / scale
-        const pdfHeight = (height * scaleY) / scale
+        const x = Math.max(0, rect.left - padX)
+        const y = Math.max(0, rect.top - padY)
+        const width = (rect.right - rect.left) + (padX * 2)
+        const height = (rect.bottom - rect.top) + (padY * 2)
+
+        const pdfX = x * scales.pdfScaleX
+        const pdfY = y * scales.pdfScaleY
+        const pdfWidth = width * scales.pdfScaleX
+        const pdfHeight = height * scales.pdfScaleY
 
         selectionRects.push({ x: pdfX, y: pdfY, width: pdfWidth, height: pdfHeight })
       }
@@ -1124,30 +1209,42 @@ function PDFViewer({
     textLayerRef.current.style.width = `${viewport.width}px`
     textLayerRef.current.style.height = `${viewport.height}px`
 
-    const textContent = await page.getTextContent()
-    
-    // Enable text selection
-    textLayerRef.current.style.userSelect = 'text'
-    textLayerRef.current.style.pointerEvents = 'auto'
+    // OCR-only (common after sanitization/rasterization)
+    if (typeof fetchOcrForPage !== 'function') return
 
-    // Render text items
-    textContent.items.forEach(item => {
-      const tx = pdfjsLib.Util.transform(
-        pdfjsLib.Util.transform(viewport.transform, item.transform),
-        [1, 0, 0, -1, 0, 0]
-      )
+    try {
+      const ocr = await fetchOcrForPage(currentPage)
+      const words = Array.isArray(ocr?.words) ? ocr.words : []
+      if (words.length === 0) return
 
-      const span = document.createElement('span')
-      span.textContent = item.str
-      span.style.position = 'absolute'
-      span.style.left = `${tx[4]}px`
-      span.style.top = `${tx[5]}px`
-      span.style.fontSize = `${Math.abs(tx[0])}px`
-      span.style.fontFamily = 'sans-serif'
-      span.style.opacity = '0.2' // Make it semi-transparent so user can see PDF beneath
+      for (const w of words) {
+        if (!w || typeof w.text !== 'string') continue
+        if (![w.x, w.y, w.width, w.height].every(Number.isFinite)) continue
 
-      textLayerRef.current.appendChild(span)
-    })
+        const left = w.x * viewport.width
+        const top = w.y * viewport.height
+        const boxWidth = w.width * viewport.width
+        const boxHeight = w.height * viewport.height
+        const fontSize = Math.max(6, boxHeight)
+
+        const span = document.createElement('span')
+        span.textContent = w.text
+        span.style.position = 'absolute'
+        span.style.left = `${left}px`
+        span.style.top = `${top}px`
+        span.style.fontSize = `${fontSize}px`
+        span.style.fontFamily = 'sans-serif'
+        // Help geometry/selection match OCR boxes more closely.
+        span.style.width = `${boxWidth}px`
+        span.style.height = `${boxHeight}px`
+        span.style.lineHeight = `${boxHeight}px`
+        span.style.display = 'block'
+
+        textLayerRef.current.appendChild(span)
+      }
+    } catch (e) {
+      console.warn('OCR text layer unavailable:', e?.message || e)
+    }
   }
 
   const handleMouseDown = (event) => {
@@ -1503,24 +1600,34 @@ function PDFViewer({
         {/* Text selection highlights */}
         {textSelections && textSelections.map(selection => (
           <div key={selection.id} className="selection-group">
-            {selection.rects.map((rect, idx) => (
-              <div
-                key={`${selection.id}-${idx}`}
-                className="text-selection-highlight"
-                style={{
-                  left: `${rect.x}px`,
-                  top: `${rect.y}px`,
-                  width: `${rect.width}px`,
-                  height: `${rect.height}px`
-                }}
-              />
-            ))}
+            {selection.rects.map((rect, idx) => {
+              const d = toDisplayRectFromPdfRect(rect)
+              if (!d) return null
+              return (
+                <div
+                  key={`${selection.id}-${idx}`}
+                  className="text-selection-highlight"
+                  style={{
+                    left: `${d.x}px`,
+                    top: `${d.y}px`,
+                    width: `${d.width}px`,
+                    height: `${d.height}px`
+                  }}
+                />
+              )
+            })}
             <button
               className="selection-delete"
               onClick={() => onRemoveSelection(selection.id)}
               style={{
-                left: `${selection.rects[0].x + selection.rects[0].width}px`,
-                top: `${selection.rects[0].y - 10}px`
+                ...(selection.rects?.[0] ? (() => {
+                  const d0 = toDisplayRectFromPdfRect(selection.rects[0])
+                  if (!d0) return { display: 'none' }
+                  return {
+                    left: `${d0.x + d0.width}px`,
+                    top: `${d0.y - 10}px`
+                  }
+                })() : { display: 'none' })
               }}
               title="Remove highlight"
             >

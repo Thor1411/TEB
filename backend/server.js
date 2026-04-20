@@ -24,12 +24,13 @@ import { inspectEmbeddedSignature, signPdfEmbedded } from './lib/embeddedSignatu
 import { connectDb } from './lib/db.js'
 import { validatePdfWithQpdf } from './lib/validate.js'
 import { runPdftoppmPng } from './lib/pdftoppm.js'
+import { ocrPdfPageWords } from './lib/ocr.js'
 import { readPdfGit, writePdfGit, createEmptyGitRepo, appendGitCommit } from './lib/pdfGit.js'
 import { computePagePixelHashes } from './lib/pageHashes.js'
 import { signGit, verifyGitSignature } from './lib/gitSigning.js'
 
 const app = express()
-const PORT = 5000
+const PORT = Number(process.env.PORT || 5000)
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:3000',
@@ -975,6 +976,58 @@ app.post('/api/documents/:id/redact', authenticate, async (req, res) => {
   }
 })
 
+// OCR for rasterized/sanitized PDFs (returns word boxes for building a selectable text layer)
+app.get('/api/documents/:id/ocr', authenticate, async (req, res) => {
+  try {
+    const docId = req.params.id
+    if (!isSafeDocId(docId)) return res.status(400).json({ error: 'Invalid document id' })
+
+    const meta = await readDocMeta(vault, docId)
+    if (meta.ownerId !== req.user.id) return res.status(403).json({ error: 'Forbidden' })
+
+    const page = Number(req.query?.page || 1)
+    if (!Number.isFinite(page) || page < 1 || page > MAX_SANITIZE_PAGES) {
+      return res.status(400).json({ error: 'Invalid page' })
+    }
+
+    const dpiRaw = Number(req.query?.dpi || process.env.OCR_DPI || 200)
+    const dpi = Math.max(72, Math.min(400, Number.isFinite(dpiRaw) ? dpiRaw : 200))
+
+    const langRaw = typeof req.query?.lang === 'string' ? req.query.lang : (process.env.OCR_LANG || 'eng')
+    const lang = (/^[a-zA-Z0-9_+]{1,32}$/.test(langRaw) ? langRaw : 'eng')
+
+    const { bytes } = await readDocBytes(vault, docId)
+    const validation = await validatePdfWithQpdf({ pdfBytes: bytes, workDir: WORK_DIR })
+    if (!validation.ok) {
+      return res.status(400).json({ error: `PDF failed structural validation: ${validation.error}` })
+    }
+
+    const result = await ocrPdfPageWords({
+      pdfBytes: bytes,
+      workDir: WORK_DIR,
+      timeoutMs: PDFTOPPM_TIMEOUT_MS,
+      page,
+      dpi,
+      lang
+    })
+
+    return res.json(result)
+  } catch (e) {
+    if (e?.code === 'ENOENT') {
+      return res.status(500).json({
+        error: 'OCR requires the `tesseract` binary. Install `tesseract-ocr` (and language packs) or set TESSERACT_CMD.'
+      })
+    }
+    const msg = String(e?.message || '')
+    if (msg.includes('Unsupported state or unable to authenticate data')) {
+      return res.status(500).json({
+        error: 'Failed to decrypt stored document bytes. This usually means `MASTER_KEY` changed between runs. Set a stable MASTER_KEY and re-upload the PDF (old encrypted docs cannot be OCR’d without the original key).'
+      })
+    }
+    return res.status(500).json({ error: e.message })
+  }
+})
+
 // Upload PDF
 app.post('/api/upload', authenticate, upload.single('pdf'), async (req, res) => {
   try {
@@ -1450,6 +1503,15 @@ app.post('/api/watermark-pdf', authenticate, conversionUpload.single('pdf'), asy
   }
 })
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`)
+})
+
+server.on('error', (err) => {
+  if (err?.code === 'EADDRINUSE') {
+    // eslint-disable-next-line no-console
+    console.error(`[server] Port ${PORT} is already in use. Stop the other process or start with PORT=${PORT + 1}.`)
+    process.exit(1)
+  }
+  throw err
 })

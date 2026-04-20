@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useEffect } from 'react'
-import { PDFDocument, rgb, StandardFonts, degrees } from 'pdf-lib'
+import { PDFDocument, rgb, StandardFonts, degrees, BlendMode } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import axios from 'axios'
 import PDFViewer from './PDFViewer'
@@ -54,6 +54,12 @@ function PDFEditor({ token, onLogout, currentUser }) {
   const imageInputRef = useRef(null)
   const [autoFocusTextBoxId, setAutoFocusTextBoxId] = useState(null)
   const fontBytesCacheRef = useRef(new Map())
+  const ocrCacheRef = useRef(new Map())
+  const applyingTextHighlightRef = useRef(false)
+
+  // Multiply keeps black pixels black while tinting light pixels yellow.
+  const TEXT_HIGHLIGHT_OPACITY = 1.0
+  const TEXT_HIGHLIGHT_BLEND_MODE = BlendMode.Multiply
   
   // Conversion feature states
   const [convertPdfFile, setConvertPdfFile] = useState(null)
@@ -201,6 +207,21 @@ function PDFEditor({ token, onLogout, currentUser }) {
       cancelled = true
     }
   }, [api, docId])
+
+  useEffect(() => {
+    ocrCacheRef.current.clear()
+  }, [docId])
+
+  const fetchOcrForPage = async (pageNumber) => {
+    if (!docId) return null
+    const key = `${docId}:${pageNumber}`
+    if (ocrCacheRef.current.has(key)) return ocrCacheRef.current.get(key)
+    const res = await api.get(`/documents/${docId}/ocr`, {
+      params: { page: pageNumber }
+    })
+    ocrCacheRef.current.set(key, res.data)
+    return res.data
+  }
 
   // Deselect overlays when clicking outside boxes + toolbars
   useEffect(() => {
@@ -660,15 +681,28 @@ function PDFEditor({ token, onLogout, currentUser }) {
   }
 
   // Handle text selection for highlighting
-  const handleTextSelection = (selection) => {
+  const handleTextSelection = async (selection) => {
     if (editMode !== 'highlight-select') return
-    
-    // Add to text selections
-    setTextSelections([...textSelections, {
-      ...selection,
-      id: Date.now(),
-      page: currentPage
-    }])
+    if (!pdfDoc) return
+    if (!selection || !Array.isArray(selection.rects) || selection.rects.length === 0) return
+    if (applyingTextHighlightRef.current) return
+
+    applyingTextHighlightRef.current = true
+    try {
+      await saveToUndoStack()
+
+      const sel = {
+        ...selection,
+        id: Date.now(),
+        page: currentPage
+      }
+
+      await applyTextSelectionsToPdf(pdfDoc, [sel])
+      await refreshPDF()
+      setTextSelections([])
+    } finally {
+      applyingTextHighlightRef.current = false
+    }
   }
 
   // Apply text selection highlights to PDF
@@ -705,7 +739,8 @@ function PDFEditor({ token, onLogout, currentUser }) {
             width: rect.width,
             height: rect.height,
             color: rgb(1, 1, 0),
-            opacity: 0.3
+            opacity: TEXT_HIGHLIGHT_OPACITY,
+            blendMode: TEXT_HIGHLIGHT_BLEND_MODE
           })
         })
       })
@@ -1072,7 +1107,8 @@ function PDFEditor({ token, onLogout, currentUser }) {
             width: rect.width,
             height: rect.height,
             color: rgb(1, 1, 0),
-            opacity: 0.3
+            opacity: TEXT_HIGHLIGHT_OPACITY,
+            blendMode: TEXT_HIGHLIGHT_BLEND_MODE
           })
         })
       })
@@ -1506,7 +1542,8 @@ function PDFEditor({ token, onLogout, currentUser }) {
       width: width,
       height: height,
       color: rgb(1, 1, 0),
-      opacity: 0.3
+      opacity: TEXT_HIGHLIGHT_OPACITY,
+      blendMode: TEXT_HIGHLIGHT_BLEND_MODE
     })
 
     await refreshPDF()
@@ -2692,6 +2729,7 @@ function PDFEditor({ token, onLogout, currentUser }) {
             pdfFile={pdfFile}
             currentPage={currentPage}
             editMode={editMode}
+            fetchOcrForPage={fetchOcrForPage}
             textBoxes={textBoxes.filter(box => box.page === currentPage)}
             imageBoxes={imageBoxes.filter(box => box.page === currentPage)}
             textSelections={textSelections.filter(sel => sel.page === currentPage)}
