@@ -102,11 +102,14 @@ export const sanitizePdfByRasterize = async ({
 
     // Best-effort: capture original page sizes so the rebuilt PDF preserves dimensions.
     let originalPageSizes = null
-    try {
-      const inDoc = await PDFDocument.load(pdfBytes)
-      originalPageSizes = inDoc.getPages().map((p) => p.getSize())
-    } catch {
-      originalPageSizes = null
+    const preservePageSize = (process.env.SANITIZE_PRESERVE_PAGE_SIZE || '1') !== '0'
+    if (preservePageSize) {
+      try {
+        const inDoc = await PDFDocument.load(pdfBytes)
+        originalPageSizes = inDoc.getPages().map((p) => p.getSize())
+      } catch {
+        originalPageSizes = null
+      }
     }
 
     await runPdftoppm({
@@ -162,11 +165,14 @@ export const redactPdfByRasterize = async ({
     await fs.writeFile(inputPath, Buffer.from(pdfBytes))
 
     let originalPageSizes = null
-    try {
-      const inDoc = await PDFDocument.load(pdfBytes)
-      originalPageSizes = inDoc.getPages().map((p) => p.getSize())
-    } catch {
-      originalPageSizes = null
+    const preservePageSize = (process.env.SANITIZE_PRESERVE_PAGE_SIZE || '1') !== '0'
+    if (preservePageSize) {
+      try {
+        const inDoc = await PDFDocument.load(pdfBytes)
+        originalPageSizes = inDoc.getPages().map((p) => p.getSize())
+      } catch {
+        originalPageSizes = null
+      }
     }
 
     await runPdftoppm({

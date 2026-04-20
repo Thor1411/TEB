@@ -415,7 +415,7 @@ app.post('/api/documents/:id/update', authenticate, upload.single('pdf'), async 
     const now = new Date().toISOString()
     
     // We reuse the current meta originalName instead of overriding with "edited.pdf"
-    const currentMeta = await readDocMeta(vault, currentId).catch(() => ({}))
+    // const currentMeta = await readDocMeta(vault, currentId).catch(() => ({}))
     
     const meta = await writeDoc(vault, newId, {
       bytes: finalBytes,
@@ -576,16 +576,21 @@ app.get('/api/documents/:id/download', authenticate, async (req, res) => {
     const { meta, bytes } = await readDocBytes(vault, docId)
     if (meta.ownerId !== req.user.id) return res.status(403).json({ error: 'Forbidden' })
 
-    await appendAuditEvent({
-      auditDir: vault.auditDir,
-      docId,
-      actor: req.user.id,
-      action: 'download',
-      details: { bytes: bytes.length }
-    })
-
     res.setHeader('Content-Type', 'application/pdf')
     res.setHeader('Content-Disposition', `attachment; filename="${docId}.pdf"`)
+    res.setHeader('Content-Length', String(bytes.length))
+
+    // Don't block the download on audit logging.
+    res.once('finish', () => {
+      appendAuditEvent({
+        auditDir: vault.auditDir,
+        docId,
+        actor: req.user.id,
+        action: 'download',
+        details: { bytes: bytes.length }
+      }).catch(() => {})
+    })
+
     return res.send(Buffer.from(bytes))
   } catch (e) {
     return res.status(500).json({ error: e.message })
@@ -628,16 +633,20 @@ app.get('/api/share/:token', async (req, res) => {
     if (!payload) return res.status(401).json({ error: 'Invalid or expired share token' })
     const { meta, bytes } = await readDocBytes(vault, payload.docId)
 
-    await appendAuditEvent({
-      auditDir: vault.auditDir,
-      docId: payload.docId,
-      actor: 'share-token',
-      action: 'download',
-      details: { ownerId: meta.ownerId }
-    })
-
     res.setHeader('Content-Type', 'application/pdf')
     res.setHeader('Content-Disposition', `attachment; filename="${payload.docId}.pdf"`)
+    res.setHeader('Content-Length', String(bytes.length))
+
+    res.once('finish', () => {
+      appendAuditEvent({
+        auditDir: vault.auditDir,
+        docId: payload.docId,
+        actor: 'share-token',
+        action: 'download',
+        details: { ownerId: meta.ownerId }
+      }).catch(() => {})
+    })
+
     return res.send(Buffer.from(bytes))
   } catch (e) {
     return res.status(500).json({ error: e.message })

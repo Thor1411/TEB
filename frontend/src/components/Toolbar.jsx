@@ -16,6 +16,7 @@ function Toolbar({
   onApplyHighlights,
   hasTextSelections,
   onDownload,
+  onSecureDownload,
   onSecureRedact,
   canSecureRedact,
   onEmbeddedSign,
@@ -57,6 +58,9 @@ function Toolbar({
   const [showDrawTools, setShowDrawTools] = useState(false)
   const [showGitMenu, setShowGitMenu] = useState(false)
   const gitMenuRef = useRef(null)
+
+  const [showDownloadMenu, setShowDownloadMenu] = useState(false)
+  const downloadMenuRef = useRef(null)
 
   const selectedBox = selectedTextId != null
     ? textBoxes.find(b => b.id === selectedTextId)
@@ -114,6 +118,21 @@ function Toolbar({
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [showGitMenu])
+
+  // Close Download menu on outside click
+  useEffect(() => {
+    if (!showDownloadMenu) return
+
+    const onDown = (e) => {
+      const el = e.target instanceof Element ? e.target : null
+      if (!el) return
+      if (downloadMenuRef.current && downloadMenuRef.current.contains(el)) return
+      setShowDownloadMenu(false)
+    }
+
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [showDownloadMenu])
 
   return (
     <>
@@ -322,12 +341,46 @@ function Toolbar({
           title="Quick check for an embedded signature marker"
         >Inspect Signature
         </button>
-        <button 
-          className="tool-btn download-btn"
-          onClick={onDownload}
-          title="Download edited PDF"
-        >Download
-        </button>
+        <div className="download-menu" ref={downloadMenuRef}>
+          <button 
+            className="tool-btn download-btn"
+            onClick={onDownload}
+            title="Download (no sanitization)"
+          >Download
+          </button>
+          <button
+            className={`tool-btn download-caret ${showDownloadMenu ? 'active' : ''}`}
+            type="button"
+            onClick={() => setShowDownloadMenu(v => !v)}
+            title="Download options"
+            aria-haspopup="menu"
+            aria-expanded={showDownloadMenu ? 'true' : 'false'}
+          >▾
+          </button>
+
+          {showDownloadMenu && (
+            <div className="download-dropdown" role="menu">
+              <button
+                className="git-item"
+                onClick={() => {
+                  setShowDownloadMenu(false)
+                  onDownload?.()
+                }}
+                title="Download without sanitization"
+              >Normal download
+              </button>
+              <button
+                className="git-item"
+                onClick={() => {
+                  setShowDownloadMenu(false)
+                  onSecureDownload?.()
+                }}
+                title="Sanitize, store securely, then download"
+              >Secure download
+              </button>
+            </div>
+          )}
+        </div>
         <button
           className="tool-btn"
           onClick={onLogout}

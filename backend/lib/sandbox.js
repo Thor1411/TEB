@@ -1,5 +1,9 @@
 import { spawn } from 'child_process'
 
+let cachedDockerAvailable = null
+let cachedDockerAvailableAt = 0
+const DOCKER_AVAILABLE_TTL_MS = Number(process.env.DOCKER_AVAILABLE_TTL_MS || 30_000)
+
 const run = async (cmd, args, { timeoutMs } = {}) => {
   await new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { shell: false, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
@@ -29,11 +33,23 @@ const run = async (cmd, args, { timeoutMs } = {}) => {
 }
 
 export const dockerAvailable = async () => {
+  // Respect explicit opt-out without probing.
+  if ((process.env.SANDBOX_DOCKER || '1') === '0') return false
+
+  const now = Date.now()
+  if (cachedDockerAvailable !== null && (now - cachedDockerAvailableAt) < DOCKER_AVAILABLE_TTL_MS) {
+    return cachedDockerAvailable
+  }
+
   try {
     await run('docker', ['version'], { timeoutMs: 2000 })
-    return true
+    cachedDockerAvailable = true
+    cachedDockerAvailableAt = now
+    return cachedDockerAvailable
   } catch {
-    return false
+    cachedDockerAvailable = false
+    cachedDockerAvailableAt = now
+    return cachedDockerAvailable
   }
 }
 

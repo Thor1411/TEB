@@ -1499,10 +1499,8 @@ function PDFEditor({ token, onLogout, currentUser }) {
     }
   }
 
-  const handleDownload = async () => {
-    if (!pdfDoc) return
-
-    // Export: bake overlays into a temporary copy of the PDF for download.
+  const buildExportPdfBytes = async () => {
+    // Export: bake overlays into a temporary copy of the PDF.
     const exportBytes = await pdfDoc.save()
     const exportDoc = await PDFDocument.load(exportBytes)
 
@@ -1514,8 +1512,29 @@ function PDFEditor({ token, onLogout, currentUser }) {
     await applyCircleBoxesToPdf(exportDoc, circleBoxes)
     await applyLineBoxesToPdf(exportDoc, lineBoxes)
 
-    const pdfBytes = await exportDoc.save()
+    return exportDoc.save()
+  }
 
+  const triggerBrowserDownload = (bytes, filename) => {
+    const blob = new Blob([bytes], { type: 'application/pdf' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename || 'edited-document.pdf'
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
+
+  const handleNormalDownload = async () => {
+    if (!pdfDoc) return
+    const pdfBytes = await buildExportPdfBytes()
+    triggerBrowserDownload(pdfBytes, 'edited-document.pdf')
+  }
+
+  const handleSecureDownload = async () => {
+    if (!pdfDoc) return
+
+    const pdfBytes = await buildExportPdfBytes()
     let downloadBytes = pdfBytes
 
     // Persist to secure backend storage by creating a new version, then download the saved bytes.
@@ -1568,14 +1587,7 @@ function PDFEditor({ token, onLogout, currentUser }) {
       }
     }
 
-    const blob = new Blob([downloadBytes], { type: 'application/pdf' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = 'edited-document.pdf'
-    link.click()
-
-    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    triggerBrowserDownload(downloadBytes, 'edited-document.pdf')
   }
 
   const handleSecureRedact = async () => {
@@ -2162,7 +2174,8 @@ function PDFEditor({ token, onLogout, currentUser }) {
             setEditMode={setEditMode}
             fontSize={fontSize}
             setFontSize={setFontSize}
-            onDownload={handleDownload}
+            onDownload={handleNormalDownload}
+            onSecureDownload={handleSecureDownload}
             onUndo={performUndo}
             onApplyText={handleApplyText}
             hasTextBoxes={textBoxes.length > 0}

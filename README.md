@@ -120,6 +120,7 @@ Sandboxing (recommended):
 - `SANDBOX_MEMORY` (default `512m`)
 - `SANDBOX_CPUS` (default `1`)
 - `SANDBOX_PIDS` (default `128`)
+- `DOCKER_AVAILABLE_TTL_MS` (default `30000`; caches the Docker availability probe to reduce per-request overhead)
 
 Embedded signing (PKCS#12):
 
@@ -133,6 +134,7 @@ Optional limits:
 - `MAX_SANITIZE_PAGES` (default 50)
 - `PDFTOPPM_TIMEOUT_MS` (default 60000)
 - `SANITIZE_DPI` (default 200; increase to 300 for sharper sanitized PDFs, at a CPU/memory cost)
+- `SANITIZE_PRESERVE_PAGE_SIZE` (default `1`; set to `0` to skip the extra PDF page-size scan for faster sanitization; output page size will follow rasterized image dimensions)
 - `RATE_LIMIT_PER_MINUTE` (default 120)
 
 Validation strictness:

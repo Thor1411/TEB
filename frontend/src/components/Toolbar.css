@@ -156,6 +156,29 @@
   align-items: center;
 }
 
+.download-menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.download-caret {
+  padding-left: 0.85rem;
+  padding-right: 0.85rem;
+}
+
+.download-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 210px;
+  background: #1B3C53;
+  border: 1px solid rgba(210, 193, 182, 0.35);
+  border-radius: 8px;
+  padding: 0.35rem;
+  z-index: 50;
+}
+
 .git-dropdown {
   position: absolute;
   top: calc(100% + 6px);
