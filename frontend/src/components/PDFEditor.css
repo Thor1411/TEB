@@ -147,6 +147,21 @@
   justify-items: center;
 }
 
+.conversion-tools-grid-bottom {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 1.5rem;
+  align-items: start;
+  justify-items: center;
+  margin-top: 1.25rem;
+}
+
+@media (max-width: 1100px) {
+  .conversion-tools-grid-bottom {
+    grid-template-columns: 1fr;
+  }
+}
+
 .conversion-tools-grid .conversion-tool {
   margin-bottom: 0;
 }
@@ -242,6 +257,23 @@
   border-color: #8C9491;
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.conversion-input {
+  font-family: "Montserrat", sans-serif;
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.9rem;
+  border-radius: 4px;
+  border: 1px solid #8C9491;
+  background: #ffffff;
+  color: #2A2F33;
+  margin-bottom: 0.75rem;
+  box-sizing: border-box;
+}
+
+.conversion-input:disabled {
+  opacity: 0.7;
 }
 
 /* Merge order controls */

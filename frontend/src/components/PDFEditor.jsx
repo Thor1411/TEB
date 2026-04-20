@@ -60,11 +60,20 @@ function PDFEditor({ token, onLogout, currentUser }) {
   const [convertImageFiles, setConvertImageFiles] = useState([])
   const [mergePdfFiles, setMergePdfFiles] = useState([])
   const [pptFile, setPptFile] = useState(null)
+  const [lockPdfFile, setLockPdfFile] = useState(null)
+  const [lockPassword, setLockPassword] = useState('')
+  const [unlockPdfFile, setUnlockPdfFile] = useState(null)
+  const [unlockPassword, setUnlockPassword] = useState('')
+  const [watermarkPdfFile, setWatermarkPdfFile] = useState(null)
+  const [watermarkText, setWatermarkText] = useState('CONFIDENTIAL')
   const [converting, setConverting] = useState(false)
   const convertPdfInputRef = useRef(null)
   const convertImageInputRef = useRef(null)
   const mergePdfInputRef = useRef(null)
   const pptInputRef = useRef(null)
+  const lockPdfInputRef = useRef(null)
+  const unlockPdfInputRef = useRef(null)
+  const watermarkPdfInputRef = useRef(null)
 
   const api = useMemo(() => {
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
@@ -73,6 +82,30 @@ function PDFEditor({ token, onLogout, currentUser }) {
       headers: token ? { Authorization: `Bearer ${token}` } : {}
     })
   }, [token])
+
+  const getApiErrorMessage = async (error, fallback) => {
+    try {
+      const data = error?.response?.data
+      if (!data) return fallback
+
+      // If axios was configured with responseType: 'blob', error payload will be a Blob.
+      if (typeof Blob !== 'undefined' && data instanceof Blob) {
+        const text = await data.text().catch(() => '')
+        if (!text) return fallback
+        try {
+          const json = JSON.parse(text)
+          return json?.error || fallback
+        } catch {
+          return text
+        }
+      }
+
+      if (typeof data === 'string') return data
+      return data?.error || fallback
+    } catch {
+      return fallback
+    }
+  }
 
   const fetchRecentDocs = async () => {
     try {
@@ -1901,7 +1934,7 @@ function PDFEditor({ token, onLogout, currentUser }) {
       setMergePdfFiles([])
     } catch (error) {
       console.error('Error merging PDFs:', error)
-      alert(error?.response?.data?.error || 'Failed to merge PDFs. Please try again.')
+      alert(await getApiErrorMessage(error, 'Failed to merge PDFs. Please try again.'))
     } finally {
       setConverting(false)
     }
@@ -1950,7 +1983,165 @@ function PDFEditor({ token, onLogout, currentUser }) {
       setPptFile(null)
     } catch (error) {
       console.error('Error converting PPT to PDF:', error)
-      alert(error?.response?.data?.error || 'Failed to convert PPT to PDF. Please try again.')
+      alert(await getApiErrorMessage(error, 'Failed to convert PPT to PDF. Please try again.'))
+    } finally {
+      setConverting(false)
+    }
+  }
+
+  // Lock / Unlock / Watermark
+  const handleLockPdfSelect = (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const name = String(file.name || '').toLowerCase()
+    const type = String(file.type || '').toLowerCase()
+    if (!name.endsWith('.pdf') && !type.includes('pdf')) {
+      alert('Please select a valid PDF file')
+      setLockPdfFile(null)
+      return
+    }
+    setLockPdfFile(file)
+  }
+
+  const handleUnlockPdfSelect = (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const name = String(file.name || '').toLowerCase()
+    const type = String(file.type || '').toLowerCase()
+    if (!name.endsWith('.pdf') && !type.includes('pdf')) {
+      alert('Please select a valid PDF file')
+      setUnlockPdfFile(null)
+      return
+    }
+    setUnlockPdfFile(file)
+  }
+
+  const handleWatermarkPdfSelect = (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const name = String(file.name || '').toLowerCase()
+    const type = String(file.type || '').toLowerCase()
+    if (!name.endsWith('.pdf') && !type.includes('pdf')) {
+      alert('Please select a valid PDF file')
+      setWatermarkPdfFile(null)
+      return
+    }
+    setWatermarkPdfFile(file)
+  }
+
+  const handleLockPdf = async () => {
+    if (!lockPdfFile) {
+      alert('Please select a PDF file first')
+      return
+    }
+    if (!String(lockPassword || '').trim()) {
+      alert('Please enter a password')
+      return
+    }
+
+    setConverting(true)
+    try {
+      const formData = new FormData()
+      formData.append('pdf', lockPdfFile)
+      formData.append('password', lockPassword)
+
+      const response = await api.post('/lock-pdf', formData, { responseType: 'blob' })
+      const blob = new Blob([response.data], { type: 'application/pdf' })
+      const url = window.URL.createObjectURL(blob)
+
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'locked.pdf'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+
+      alert('PDF locked successfully!')
+      setLockPdfFile(null)
+      setLockPassword('')
+    } catch (error) {
+      console.error('Error locking PDF:', error)
+      alert(await getApiErrorMessage(error, 'Failed to lock PDF. Please try again.'))
+    } finally {
+      setConverting(false)
+    }
+  }
+
+  const handleUnlockPdf = async () => {
+    if (!unlockPdfFile) {
+      alert('Please select a PDF file first')
+      return
+    }
+    if (!String(unlockPassword || '').trim()) {
+      alert('Please enter the password')
+      return
+    }
+
+    setConverting(true)
+    try {
+      const formData = new FormData()
+      formData.append('pdf', unlockPdfFile)
+      formData.append('password', unlockPassword)
+
+      const response = await api.post('/unlock-pdf', formData, { responseType: 'blob' })
+      const blob = new Blob([response.data], { type: 'application/pdf' })
+      const url = window.URL.createObjectURL(blob)
+
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'unlocked.pdf'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+
+      alert('PDF unlocked successfully!')
+      setUnlockPdfFile(null)
+      setUnlockPassword('')
+    } catch (error) {
+      console.error('Error unlocking PDF:', error)
+      alert(await getApiErrorMessage(error, 'Failed to unlock PDF. Please try again.'))
+    } finally {
+      setConverting(false)
+    }
+  }
+
+  const handleWatermarkPdf = async () => {
+    if (!watermarkPdfFile) {
+      alert('Please select a PDF file first')
+      return
+    }
+    const text = String(watermarkText || '').trim()
+    if (!text) {
+      alert('Please enter watermark text')
+      return
+    }
+
+    setConverting(true)
+    try {
+      const formData = new FormData()
+      formData.append('pdf', watermarkPdfFile)
+      formData.append('text', text)
+
+      const response = await api.post('/watermark-pdf', formData, { responseType: 'blob' })
+      const blob = new Blob([response.data], { type: 'application/pdf' })
+      const url = window.URL.createObjectURL(blob)
+
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'watermarked.pdf'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+
+      alert('Watermark added successfully!')
+      setWatermarkPdfFile(null)
+      setWatermarkText('CONFIDENTIAL')
+    } catch (error) {
+      console.error('Error watermarking PDF:', error)
+      alert(await getApiErrorMessage(error, 'Failed to watermark PDF. Please try again.'))
     } finally {
       setConverting(false)
     }
@@ -2255,6 +2446,116 @@ function PDFEditor({ token, onLogout, currentUser }) {
                   >
                     {converting ? 'Converting...' : 'Convert to PDF'}
                   </button>
+                )}
+              </div>
+            </div>
+
+            <div className="conversion-tools-grid-bottom">
+              <div className="conversion-tool">
+                <h4>Lock PDF</h4>
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={handleLockPdfSelect}
+                  ref={lockPdfInputRef}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  className="conversion-btn"
+                  onClick={() => lockPdfInputRef.current.click()}
+                >
+                  {lockPdfFile ? `Selected: ${lockPdfFile.name}` : 'Choose PDF'}
+                </button>
+                {lockPdfFile && (
+                  <>
+                    <input
+                      className="conversion-input"
+                      type="password"
+                      placeholder="Password"
+                      value={lockPassword}
+                      onChange={(e) => setLockPassword(e.target.value)}
+                      disabled={converting}
+                    />
+                    <button
+                      className="convert-action-btn"
+                      onClick={handleLockPdf}
+                      disabled={converting}
+                    >
+                      {converting ? 'Locking...' : 'Lock PDF'}
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className="conversion-tool">
+                <h4>Unlock PDF</h4>
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={handleUnlockPdfSelect}
+                  ref={unlockPdfInputRef}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  className="conversion-btn"
+                  onClick={() => unlockPdfInputRef.current.click()}
+                >
+                  {unlockPdfFile ? `Selected: ${unlockPdfFile.name}` : 'Choose PDF'}
+                </button>
+                {unlockPdfFile && (
+                  <>
+                    <input
+                      className="conversion-input"
+                      type="password"
+                      placeholder="Password"
+                      value={unlockPassword}
+                      onChange={(e) => setUnlockPassword(e.target.value)}
+                      disabled={converting}
+                    />
+                    <button
+                      className="convert-action-btn"
+                      onClick={handleUnlockPdf}
+                      disabled={converting}
+                    >
+                      {converting ? 'Unlocking...' : 'Unlock PDF'}
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className="conversion-tool">
+                <h4>Watermark</h4>
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={handleWatermarkPdfSelect}
+                  ref={watermarkPdfInputRef}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  className="conversion-btn"
+                  onClick={() => watermarkPdfInputRef.current.click()}
+                >
+                  {watermarkPdfFile ? `Selected: ${watermarkPdfFile.name}` : 'Choose PDF'}
+                </button>
+                {watermarkPdfFile && (
+                  <>
+                    <input
+                      className="conversion-input"
+                      type="text"
+                      placeholder="Watermark text"
+                      value={watermarkText}
+                      onChange={(e) => setWatermarkText(e.target.value)}
+                      disabled={converting}
+                    />
+                    <button
+                      className="convert-action-btn"
+                      onClick={handleWatermarkPdf}
+                      disabled={converting}
+                    >
+                      {converting ? 'Adding...' : 'Add Watermark'}
+                    </button>
+                  </>
                 )}
               </div>
             </div>

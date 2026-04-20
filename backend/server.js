@@ -2,7 +2,7 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
-import { PDFDocument } from 'pdf-lib'
+import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib'
 import fs from 'fs/promises'
 import path from 'path'
 import archiver from 'archiver'
@@ -12,6 +12,8 @@ import rateLimit from 'express-rate-limit'
 import sharp from 'sharp'
 import bcrypt from 'bcryptjs'
 import { spawn } from 'child_process'
+
+import { dockerAvailable, runInDockerSandbox } from './lib/sandbox.js'
 
 import { authenticate, getUsers, getUserByEmail, createUser, signAccessToken, ensureAdminUser } from './lib/auth.js'
 import { appendAuditEvent, readAuditLog, verifyAuditLog } from './lib/audit.js'
@@ -268,6 +270,58 @@ const runLibreOfficeConvertToPdf = async ({ inputPath, outDir, timeoutMs }) => {
     throw new Error('LibreOffice is not installed (expected `libreoffice` or `soffice`). Install LibreOffice to enable PPT→PDF conversion.')
   }
   throw lastErr || new Error('LibreOffice conversion failed')
+}
+
+const runQpdf = async ({ jobDir, args, timeoutMs }) => {
+  const useDocker = (process.env.SANDBOX_DOCKER || '1') !== '0'
+  const hasDocker = useDocker ? await dockerAvailable() : false
+
+  const runLocal = async () => {
+    await new Promise((resolve, reject) => {
+      const child = spawn('qpdf', args, { cwd: jobDir, shell: false, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+
+      let stderr = ''
+      child.stderr?.on('data', (d) => {
+        stderr += d.toString()
+        if (stderr.length > 20_000) stderr = stderr.slice(-20_000)
+      })
+
+      const timer = timeoutMs ? setTimeout(() => {
+        child.kill('SIGKILL')
+        reject(new Error('qpdf timed out'))
+      }, timeoutMs) : null
+
+      child.on('error', (err) => {
+        if (timer) clearTimeout(timer)
+        reject(err)
+      })
+
+      child.on('close', (code) => {
+        if (timer) clearTimeout(timer)
+        if (code === 0) return resolve()
+        reject(new Error(`qpdf failed (code ${code}): ${stderr || 'unknown error'}`))
+      })
+    })
+  }
+
+  if (hasDocker) {
+    const image = process.env.SANDBOX_IMAGE || 'secure-pdf-sanitizer:latest'
+    try {
+      await runInDockerSandbox({
+        image,
+        workDir: jobDir,
+        cmd: 'qpdf',
+        args,
+        timeoutMs
+      })
+      return
+    } catch {
+      await runLocal()
+      return
+    }
+  }
+
+  await runLocal()
 }
 
 // Routes
@@ -1242,6 +1296,157 @@ app.post('/api/ppt-to-pdf', authenticate, officeUpload.single('ppt'), async (req
     if (outputDir) await fs.rm(outputDir, { recursive: true, force: true }).catch(() => {})
     for (const file of tempFiles) await fs.unlink(file).catch(() => {})
     res.status(500).json({ error: 'Failed to convert PPT to PDF: ' + (error?.message || String(error)) })
+  }
+})
+
+// Lock PDF (encrypt)
+app.post('/api/lock-pdf', authenticate, conversionUpload.single('pdf'), async (req, res) => {
+  let tempFiles = []
+  let jobDir = null
+
+  try {
+    const password = String(req.body?.password || '').trim()
+    if (!req.file) return res.status(400).json({ error: 'No PDF file uploaded' })
+    if (!password) return res.status(400).json({ error: 'Password is required' })
+
+    const pdfPath = req.file.path
+    tempFiles.push(pdfPath)
+
+    jobDir = path.join(WORK_DIR, `qpdf-${crypto.randomUUID()}`)
+    await fs.mkdir(jobDir, { recursive: true })
+    const inputPath = path.join(jobDir, 'input.pdf')
+    const outputPath = path.join(jobDir, 'output.pdf')
+    await fs.writeFile(inputPath, await fs.readFile(pdfPath))
+
+    const ownerPassword = crypto.randomBytes(24).toString('base64url')
+    await runQpdf({
+      jobDir,
+      args: ['--encrypt', password, ownerPassword, '256', '--', 'input.pdf', 'output.pdf'],
+      timeoutMs: Number(process.env.QPDF_TIMEOUT_MS || 30_000)
+    })
+
+    const lockedBytes = await fs.readFile(outputPath)
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', 'attachment; filename=locked.pdf')
+    res.send(Buffer.from(lockedBytes))
+
+    setTimeout(async () => {
+      if (jobDir) await fs.rm(jobDir, { recursive: true, force: true }).catch(() => {})
+      for (const f of tempFiles) await fs.unlink(f).catch(() => {})
+    }, 1500)
+  } catch (error) {
+    const isMissingBinary = error?.code === 'ENOENT' || /qpdf\s+not found|ENOENT/.test(String(error?.message || ''))
+    if (jobDir) await fs.rm(jobDir, { recursive: true, force: true }).catch(() => {})
+    for (const f of tempFiles) await fs.unlink(f).catch(() => {})
+    res.status(500).json({
+      error: isMissingBinary
+        ? 'qpdf is not installed; cannot lock PDFs. Install qpdf (recommended) or enable the Docker sandbox image.'
+        : ('Failed to lock PDF: ' + (error?.message || String(error)))
+    })
+  }
+})
+
+// Unlock PDF (decrypt)
+app.post('/api/unlock-pdf', authenticate, conversionUpload.single('pdf'), async (req, res) => {
+  let tempFiles = []
+  let jobDir = null
+
+  try {
+    const password = String(req.body?.password || '').trim()
+    if (!req.file) return res.status(400).json({ error: 'No PDF file uploaded' })
+    if (!password) return res.status(400).json({ error: 'Password is required' })
+
+    const pdfPath = req.file.path
+    tempFiles.push(pdfPath)
+
+    jobDir = path.join(WORK_DIR, `qpdf-${crypto.randomUUID()}`)
+    await fs.mkdir(jobDir, { recursive: true })
+    const inputPath = path.join(jobDir, 'input.pdf')
+    const outputPath = path.join(jobDir, 'output.pdf')
+    await fs.writeFile(inputPath, await fs.readFile(pdfPath))
+
+    await runQpdf({
+      jobDir,
+      args: [`--password=${password}`, '--decrypt', '--', 'input.pdf', 'output.pdf'],
+      timeoutMs: Number(process.env.QPDF_TIMEOUT_MS || 30_000)
+    })
+
+    const unlockedBytes = await fs.readFile(outputPath)
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', 'attachment; filename=unlocked.pdf')
+    res.send(Buffer.from(unlockedBytes))
+
+    setTimeout(async () => {
+      if (jobDir) await fs.rm(jobDir, { recursive: true, force: true }).catch(() => {})
+      for (const f of tempFiles) await fs.unlink(f).catch(() => {})
+    }, 1500)
+  } catch (error) {
+    const isMissingBinary = error?.code === 'ENOENT' || /qpdf\s+not found|ENOENT/.test(String(error?.message || ''))
+    if (jobDir) await fs.rm(jobDir, { recursive: true, force: true }).catch(() => {})
+    for (const f of tempFiles) await fs.unlink(f).catch(() => {})
+    res.status(500).json({
+      error: isMissingBinary
+        ? 'qpdf is not installed; cannot unlock PDFs. Install qpdf (recommended) or enable the Docker sandbox image.'
+        : ('Failed to unlock PDF: ' + (error?.message || String(error)))
+    })
+  }
+})
+
+// Watermark PDF (simple text watermark)
+app.post('/api/watermark-pdf', authenticate, conversionUpload.single('pdf'), async (req, res) => {
+  let tempFiles = []
+  try {
+    const text = String(req.body?.text || 'CONFIDENTIAL').trim() || 'CONFIDENTIAL'
+    if (!req.file) return res.status(400).json({ error: 'No PDF file uploaded' })
+
+    const pdfPath = req.file.path
+    tempFiles.push(pdfPath)
+    const pdfBytes = await fs.readFile(pdfPath)
+
+    const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true })
+    const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
+
+    const pages = pdfDoc.getPages()
+    for (const page of pages) {
+      const { width, height } = page.getSize()
+
+      // Small repeated watermark tiled across the page.
+      const size = Math.max(12, Math.min(20, Math.floor(Math.min(width, height) / 45)))
+      const textWidth = font.widthOfTextAtSize(text, size)
+      const stepX = Math.max(120, textWidth + 90)
+      const stepY = Math.max(90, size * 6)
+
+      const startX = -width
+      const endX = width * 2
+      const startY = -height
+      const endY = height * 2
+
+      for (let y = startY; y <= endY; y += stepY) {
+        for (let x = startX; x <= endX; x += stepX) {
+          page.drawText(text, {
+            x,
+            y,
+            size,
+            font,
+            color: rgb(0.7, 0.7, 0.7),
+            rotate: degrees(35),
+            opacity: 0.16
+          })
+        }
+      }
+    }
+
+    const outBytes = await pdfDoc.save()
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', 'attachment; filename=watermarked.pdf')
+    res.send(Buffer.from(outBytes))
+
+    setTimeout(async () => {
+      for (const f of tempFiles) await fs.unlink(f).catch(() => {})
+    }, 1000)
+  } catch (error) {
+    for (const f of tempFiles) await fs.unlink(f).catch(() => {})
+    res.status(500).json({ error: 'Failed to watermark PDF: ' + (error?.message || String(error)) })
   }
 })
 
