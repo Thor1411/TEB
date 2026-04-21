@@ -1,16 +1,23 @@
+@import url("https://fonts.googleapis.com/css2?family=Dancing+Script&display=swap");
+
 .App {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #F9F3EF;
+  font-family:
+    "Inter",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  background: #f9f3ef;
 }
 
 .app-header {
-  background: #1B3C53;
+  background: #1b3c53;
   padding: 1.5rem 2rem;
   text-align: center;
-  color: #1B3C53;
+  color: #1b3c53;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   /* border-bottom: 1px solid #8C9491; */
 }
@@ -21,13 +28,13 @@
   font-size: 3.5rem;
   font-weight: 600;
   letter-spacing: -0.5px;
-  color: #D2C1B6;
+  color: #d2c1b6;
 }
 
 .app-header p {
   margin: 0.5rem 0 0 0;
   font-size: 0.95rem;
-  color: #D2C1B6;
+  color: #d2c1b6;
   font-weight: 400;
   letter-spacing: 0.3px;
   font-family: "Montserrat", sans-serif;

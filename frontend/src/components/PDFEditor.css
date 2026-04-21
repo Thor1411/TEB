@@ -149,7 +149,7 @@
 
 .conversion-tools-grid-bottom {
   display: grid;
-  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
   gap: 1.5rem;
   align-items: start;
   justify-items: center;
