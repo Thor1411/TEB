@@ -1,6 +1,42 @@
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
+import fs from 'fs/promises'
+import path from 'path'
+
+const VAULT_DIR = process.env.VAULT_DIR || './secure_storage'
+const USERS_FILE = path.join(VAULT_DIR, 'users.json')
+
+const normalizeEmail = (email) => String(email || '').trim().toLowerCase()
+
+const readDiskUsers = async () => {
+  try {
+    const raw = await fs.readFile(USERS_FILE, 'utf8')
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+const writeDiskUsers = async (users) => {
+  await fs.mkdir(path.dirname(USERS_FILE), { recursive: true })
+  const tmp = `${USERS_FILE}.tmp`
+  await fs.writeFile(tmp, JSON.stringify(users, null, 2), 'utf8')
+  await fs.rename(tmp, USERS_FILE)
+}
+
+const upsertDiskUser = async (user) => {
+  const users = await readDiskUsers()
+  const email = normalizeEmail(user.email)
+  const idx = users.findIndex(u => normalizeEmail(u.email) === email)
+  if (idx >= 0) {
+    users[idx] = { ...users[idx], ...user, email: users[idx].email }
+  } else {
+    users.push(user)
+  }
+  await writeDiskUsers(users)
+}
 
 const getJwtSecret = () => {
   const raw = process.env.JWT_SECRET || ''
@@ -55,8 +91,15 @@ export const getUserByEmail = async (email) => {
   } catch {
     // ignore
   }
-  // Fallback to in-memory
-  return DEFAULT_USERS.find(u => u.email === email || u.username === email) || null
+
+  // Fallback to filesystem-backed store (survives restarts)
+  const key = normalizeEmail(email)
+  const diskUsers = await readDiskUsers()
+  const diskUser = diskUsers.find(u => normalizeEmail(u.email) === key || String(u.username || '').toLowerCase() === key)
+  if (diskUser) return diskUser
+
+  // Fallback to in-memory (demo)
+  return DEFAULT_USERS.find(u => normalizeEmail(u.email) === key || String(u.username || '').toLowerCase() === key) || null
 }
 
 export const createUser = async (name, email, password) => {
@@ -87,9 +130,11 @@ export const createUser = async (name, email, password) => {
     // ignore
   }
 
-  // Fallback to in-memory
+  // Fallback to filesystem-backed store (and mirror in memory)
   const id = crypto.randomUUID()
-  const newUser = { id, name, email, passwordHash, roles }
+  const normalizedEmail = normalizeEmail(email)
+  const newUser = { id, name, email: normalizedEmail, username: normalizedEmail, passwordHash, roles }
+  await upsertDiskUser(newUser)
   DEFAULT_USERS.push(newUser)
   return newUser
 }

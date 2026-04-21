@@ -53,7 +53,9 @@ function Toolbar({
   gitDocId,
   onGitInit,
   onGitHistory,
-  onGitVerify
+  onGitVerify,
+  gitInitLoading,
+  downloadLoading
 }) {
   const [showDrawTools, setShowDrawTools] = useState(false)
   const [showGitMenu, setShowGitMenu] = useState(false)
@@ -276,9 +278,14 @@ function Toolbar({
                   if (gitEnabled) return
                   onGitInit?.()
                 }}
-                disabled={gitEnabled}
+                disabled={gitEnabled || gitInitLoading}
                 title={gitEnabled ? 'Already initialized' : 'Initialize PDF Git metadata inside this PDF'}
-              >Init
+              >{gitInitLoading ? (
+                <>
+                  <span className="spinner" aria-hidden="true" />
+                  Initializing…
+                </>
+              ) : 'Init'}
               </button>
 
               {gitEnabled && gitDocId ? (
@@ -325,25 +332,38 @@ function Toolbar({
           onClick={onEmbeddedSign}
           disabled={embeddedSignDisabled}
           title="Create an embedded PDF signature (server-side)"
-        >Sign (Embedded)
+        >
         </button>
         <button
           className="tool-btn"
           onClick={onInspectEmbeddedSignature}
           title="Quick check for an embedded signature marker"
-        >Inspect Signature
+        >
         </button>
         <div className="download-menu" ref={downloadMenuRef}>
           <button 
             className="tool-btn download-btn"
-            onClick={onDownload}
-            title="Download (no sanitization)"
-          >Download
+            onClick={() => {
+              if (downloadLoading) return
+              onDownload?.()
+            }}
+            disabled={downloadLoading}
+            title="Download locally (does not save/update PDF Git)"
+          >{downloadLoading ? (
+            <>
+              <span className="spinner" aria-hidden="true" />
+              Downloading…
+            </>
+          ) : 'Download'}
           </button>
           <button
             className={`tool-btn download-caret ${showDownloadMenu ? 'active' : ''}`}
             type="button"
-            onClick={() => setShowDownloadMenu(v => !v)}
+            onClick={() => {
+              if (downloadLoading) return
+              setShowDownloadMenu(v => !v)
+            }}
+            disabled={downloadLoading}
             title="Download options"
             aria-haspopup="menu"
             aria-expanded={showDownloadMenu ? 'true' : 'false'}
@@ -358,8 +378,9 @@ function Toolbar({
                   setShowDownloadMenu(false)
                   onDownload?.()
                 }}
-                title="Download without sanitization"
-              >Normal download
+                disabled={downloadLoading}
+                title="Local-only download (does not save/update PDF Git)"
+              >Normal download (local)
               </button>
               <button
                 className="git-item"
@@ -367,7 +388,8 @@ function Toolbar({
                   setShowDownloadMenu(false)
                   onSecureDownload?.()
                 }}
-                title="Sanitize, store securely, then download"
+                disabled={downloadLoading}
+                title="Sanitize, store securely, update PDF Git, then download"
               >Secure download
               </button>
             </div>

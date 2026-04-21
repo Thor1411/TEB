@@ -137,7 +137,7 @@ function App() {
                 alt="Logo" 
                 className="header-logo"
               />
-              PDF Editor
+              I Hate PDF
             </h1>
             <p style={{ margin: '0.5rem 0 0 0' }}>Upload, edit, and download your PDF files</p>
           </header>

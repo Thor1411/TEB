@@ -9,7 +9,7 @@ export const ensureDir = async (dir) => {
 const mustGetMasterKey = () => {
   const raw = process.env.MASTER_KEY || ''
   if (!raw) {
-    // Dev fallback: random key per process (docs will be undecryptable after restart)
+    // Dev fallback: key provided by initVault() (persisted to disk)
     if (!globalThis.__PDF_VAULT_MASTER_KEY) {
       globalThis.__PDF_VAULT_MASTER_KEY = crypto.randomBytes(32)
     }
@@ -70,6 +70,27 @@ export const initVault = async (vaultDir) => {
   const docsDir = path.join(vaultDir, 'docs')
   const metaDir = path.join(vaultDir, 'meta')
   const auditDir = path.join(vaultDir, 'audit')
+
+  // If MASTER_KEY isn't set, persist a dev master key so docs survive restarts.
+  if (!process.env.MASTER_KEY) {
+    const keyPath = path.join(vaultDir, 'master_key.dev')
+    try {
+      const raw = await fs.readFile(keyPath, 'utf8')
+      const key = Buffer.from(String(raw).trim(), 'base64')
+      if (key.length === 32) {
+        globalThis.__PDF_VAULT_MASTER_KEY = key
+      }
+    } catch {
+      // ignore, will create below
+    }
+
+    if (!globalThis.__PDF_VAULT_MASTER_KEY || globalThis.__PDF_VAULT_MASTER_KEY.length !== 32) {
+      const key = crypto.randomBytes(32)
+      globalThis.__PDF_VAULT_MASTER_KEY = key
+      await ensureDir(vaultDir)
+      await fs.writeFile(keyPath, key.toString('base64'), 'utf8')
+    }
+  }
 
   await ensureDir(vaultDir)
   await ensureDir(docsDir)

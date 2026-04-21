@@ -3555,6 +3555,23 @@ import PDFViewer from "./PDFViewer";
 import Toolbar from "./Toolbar";
 import "./PDFEditor.css";
 
+const formatTsIst = (ts) => {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return String(ts);
+  const s = d.toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  return `${s} IST`;
+};
+
 function PDFEditor({ token, onLogout, currentUser }) {
   const [pdfFile, setPdfFile] = useState(null);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -3586,6 +3603,8 @@ function PDFEditor({ token, onLogout, currentUser }) {
   const [totalPages, setTotalPages] = useState(0);
   const [gitEnabled, setGitEnabled] = useState(false);
   const [gitSignatureOk, setGitSignatureOk] = useState(null);
+  const [gitInitLoading, setGitInitLoading] = useState(false);
+  const [downloadLoading, setDownloadLoading] = useState(false);
   const [editMode, setEditMode] = useState(null);
   const [textContent, setTextContent] = useState("");
   const [fontSize, setFontSize] = useState(16);
@@ -3608,6 +3627,7 @@ function PDFEditor({ token, onLogout, currentUser }) {
   const fontBytesCacheRef = useRef(new Map());
   const ocrCacheRef = useRef(new Map());
   const applyingTextHighlightRef = useRef(false);
+  const pendingGitActionsRef = useRef([]);
 
   // Multiply keeps black pixels black while tinting light pixels yellow.
   const TEXT_HIGHLIGHT_OPACITY = 1.0;
@@ -3892,6 +3912,58 @@ function PDFEditor({ token, onLogout, currentUser }) {
     ocrCacheRef.current.clear();
   }, [docId]);
 
+  const goHome = () => {
+    // Remove any document-specific URL param so refresh doesn't reload the doc.
+    const params = new URLSearchParams(window.location.search);
+    params.delete("doc");
+    const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
+    window.history.pushState({}, "", next);
+
+    // Revoke current blob URL to avoid memory leaks.
+    if (pdfFile && String(pdfFile).startsWith("blob:")) {
+      try {
+        URL.revokeObjectURL(pdfFile);
+      } catch {
+        // ignore
+      }
+    }
+
+    // Reset editor state back to the upload/home screen.
+    setPdfFile(null);
+    setPdfDoc(null);
+    setDocId(null);
+    setEmbeddedSigning(false);
+    setUploadingPdf(false);
+    setLoadingPdf(false);
+    setCurrentPage(1);
+    setTotalPages(0);
+    setGitEnabled(false);
+    setGitSignatureOk(null);
+    setEditMode(null);
+    setTextContent("");
+    setTextBoxes([]);
+    setImageBoxes([]);
+    setTextSelections([]);
+    setRectangleBoxes([]);
+    setCircleBoxes([]);
+    setLineBoxes([]);
+    setUndoStack([]);
+    setSelectedTextId(null);
+    setSelectedRectangleId(null);
+    setSelectedCircleId(null);
+    setSelectedLineId(null);
+    setAutoFocusTextBoxId(null);
+    setSigningPdfFile(null);
+    setSigningMode(false);
+    setDrawingMode(false);
+    setDrawingCanvas(null);
+    setShowNameModal(false);
+    setSignatureName("");
+    setPageSizes([]);
+
+    pendingGitActionsRef.current = [];
+  };
+
   const fetchOcrForPage = async (pageNumber) => {
     if (!docId) return null;
     const key = `${docId}:${pageNumber}`;
@@ -4006,11 +4078,14 @@ function PDFEditor({ token, onLogout, currentUser }) {
   };
 
   const handleGitInit = async () => {
+    if (gitInitLoading) return;
     try {
       if (!docId) {
         alert("No document loaded");
         return;
       }
+
+      setGitInitLoading(true);
       const res = await api.post(`/documents/${docId}/git/init`);
       const newId = res.data?.id;
       if (!newId) throw new Error("Init failed");
@@ -4050,6 +4125,8 @@ function PDFEditor({ token, onLogout, currentUser }) {
       alert(
         e?.response?.data?.error || e.message || "Failed to initialize PDF Git",
       );
+    } finally {
+      setGitInitLoading(false);
     }
   };
 
@@ -4070,14 +4147,20 @@ function PDFEditor({ token, onLogout, currentUser }) {
       const actor = c.actor?.email || c.actor?.id || "unknown";
       const short = String(c.id || cur).slice(0, 8);
       lines.push(`o ${short}  ${c.message}`);
-      lines.push(`|  ${c.ts}  by ${actor}`);
+      lines.push(`|  ${formatTsIst(c.ts)}  by ${actor}`);
       if (Array.isArray(c.actions) && c.actions.length > 0) {
         for (const a of c.actions.slice(0, 8)) {
           const page = a.page ? ` page=${a.page}` : "";
           const txt = a.text
             ? ` text=${JSON.stringify(String(a.text).slice(0, 80))}`
             : "";
-          lines.push(`|  - ${a.type}${page}${txt}`);
+          const extras = Object.entries(a || {})
+            .filter(([k, v]) => !["type", "page", "text"].includes(k) && v != null)
+            .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+            .join(" ");
+          lines.push(
+            `|  - ${a.type}${page}${txt}${extras ? ` ${extras}` : ""}`,
+          );
         }
         if (c.actions.length > 8) lines.push("  - ...");
       }
@@ -4086,6 +4169,49 @@ function PDFEditor({ token, onLogout, currentUser }) {
       n++;
     }
     return lines.join("\n");
+  };
+
+  const buildGitActionsForSave = () => {
+    const actions = [];
+
+    // Actions that are applied directly onto the PDF (not represented as overlays)
+    // are tracked in this ref.
+    if (Array.isArray(pendingGitActionsRef.current)) {
+      actions.push(...pendingGitActionsRef.current);
+    }
+
+    const validTextBoxes = (textBoxes || []).filter((b) => (b.text || "").trim());
+    for (const b of validTextBoxes) {
+      actions.push({
+        type: "text",
+        page: b.page,
+        text: String(b.text || "").slice(0, 120),
+      });
+    }
+
+    for (const b of imageBoxes || []) {
+      actions.push({ type: "image", page: b.page });
+    }
+
+    for (const s of textSelections || []) {
+      actions.push({
+        type: "highlight",
+        page: s.page,
+        count: Array.isArray(s.rects) ? s.rects.length : 0,
+      });
+    }
+
+    for (const b of rectangleBoxes || []) {
+      actions.push({ type: b?.filled ? "filled-rect" : "rect", page: b.page });
+    }
+    for (const b of circleBoxes || []) {
+      actions.push({ type: b?.filled ? "filled-circle" : "circle", page: b.page });
+    }
+    for (const b of lineBoxes || []) {
+      actions.push({ type: "line", page: b.page });
+    }
+
+    return actions;
   };
 
   const handleGitHistory = async (historyWindow) => {
@@ -4193,13 +4319,24 @@ function PDFEditor({ token, onLogout, currentUser }) {
       const modified = Array.isArray(res.data?.modifiedPages)
         ? res.data.modifiedPages
         : [];
+      const pageHashSkipped = !!res.data?.pageHashCheck?.skipped;
+      const pageHashReason =
+        typeof res.data?.pageHashCheck?.reason === "string"
+          ? res.data.pageHashCheck.reason
+          : null;
       const sigOk = res.data?.signature?.ok;
       const sigMsg =
         typeof sigOk === "boolean"
           ? `Signature: ${sigOk ? "OK" : "FAIL"}`
           : "Signature: unknown";
       if (ok) {
-        alert(`PDF Git verification OK\n${sigMsg}`);
+        if (pageHashSkipped) {
+          alert(
+            `PDF Git verification OK (signature only)\n${sigMsg}\nPage tamper check skipped: ${pageHashReason || "unavailable"}`,
+          );
+        } else {
+          alert(`PDF Git verification OK\n${sigMsg}`);
+        }
       } else {
         alert(
           `PDF was modified outside authorized flow\nModified pages: ${modified.join(", ") || "unknown"}\n${sigMsg}`,
@@ -5370,6 +5507,12 @@ function PDFEditor({ token, onLogout, currentUser }) {
 
     await saveToUndoStack();
 
+    pendingGitActionsRef.current.push({
+      type: "highlight",
+      page: currentPage,
+      mode: "draw",
+    });
+
     const pages = pdfDoc.getPages();
     const page = pages[currentPage - 1];
     const { height: pageHeight } = page.getSize();
@@ -5408,11 +5551,24 @@ function PDFEditor({ token, onLogout, currentUser }) {
   };
 
   const buildExportPdfBytes = async () => {
+    const validTextBoxes = textBoxes.filter((box) => box.text.trim());
+    const hasOverlays =
+      validTextBoxes.length > 0 ||
+      imageBoxes.length > 0 ||
+      textSelections.length > 0 ||
+      rectangleBoxes.length > 0 ||
+      circleBoxes.length > 0 ||
+      lineBoxes.length > 0;
+
+    // Fast path: if there are no pending overlays, just save the existing PDF.
+    if (!hasOverlays) {
+      return pdfDoc.save();
+    }
+
     // Export: bake overlays into a temporary copy of the PDF.
     const exportBytes = await pdfDoc.save();
     const exportDoc = await PDFDocument.load(exportBytes);
 
-    const validTextBoxes = textBoxes.filter((box) => box.text.trim());
     await applyTextBoxesToPdf(exportDoc, validTextBoxes);
     await applyImageBoxesToPdf(exportDoc, imageBoxes);
     await applyTextSelectionsToPdf(exportDoc, textSelections);
@@ -5435,21 +5591,25 @@ function PDFEditor({ token, onLogout, currentUser }) {
 
   const handleNormalDownload = async () => {
     if (!pdfDoc) return;
-    const pdfBytes = await buildExportPdfBytes();
-    triggerBrowserDownload(pdfBytes, "edited-document.pdf");
-  };
+    if (downloadLoading) return;
 
-  const handleSecureDownload = async () => {
-    if (!pdfDoc) return;
+    setDownloadLoading(true);
+    try {
 
-    const pdfBytes = await buildExportPdfBytes();
-    let downloadBytes = pdfBytes;
+      // Normal download should be fast (no rasterize-sanitization) but still update
+      // embedded PDF-Git so the Git tree shows your actions after reopening.
+      //
+      // If this file isn't tied to secure storage (no docId), we can only download locally.
+      const pdfBytes = await buildExportPdfBytes();
+      const gitActions = buildGitActionsForSave();
 
-    // Persist to secure backend storage by creating a new version, then download the saved bytes.
-    // After a successful save, reload that saved version into the editor so the visible PDF,
-    // the active docId, and the Git metadata all refer to the same document.
-    if (docId) {
+      if (!docId) {
+        triggerBrowserDownload(pdfBytes, "edited-document.pdf");
+        return;
+      }
+
       try {
+        // 1) Ask backend to create a new version quickly and embed PDF-Git (no sanitization).
         const fd = new FormData();
         fd.append(
           "pdf",
@@ -5457,16 +5617,23 @@ function PDFEditor({ token, onLogout, currentUser }) {
           "edited.pdf",
         );
 
-        const res = await api.post(`/documents/${docId}/update`, fd);
-        const newId = res.data?.id;
-        if (!newId) throw new Error("Update failed");
+        if (gitActions.length > 0) {
+          fd.append("gitActions", JSON.stringify(gitActions));
+        }
+        fd.append("gitInitIfMissing", "true");
 
+        const res = await api.post(`/documents/${docId}/update-fast`, fd);
+        const newId = res.data?.id;
+        if (!newId) throw new Error("Fast update failed");
+
+        // 2) Download the newly-saved bytes so the downloaded file includes updated PDF-Git.
         const downloadRes = await api.get(`/documents/${newId}/download`, {
           responseType: "arraybuffer",
         });
-        downloadBytes = downloadRes.data;
+        const downloadBytes = downloadRes.data;
+        triggerBrowserDownload(downloadBytes, "edited-document.pdf");
 
-        // Refresh editor state to the newly stored, sanitized PDF version.
+        // 3) Refresh editor state to the saved version so future commits are consistent.
         const blob = new Blob([downloadBytes], { type: "application/pdf" });
         const arrayBuffer = await blob.arrayBuffer();
         const pdf = await PDFDocument.load(arrayBuffer);
@@ -5479,7 +5646,14 @@ function PDFEditor({ token, onLogout, currentUser }) {
         if (oldUrl) setTimeout(() => URL.revokeObjectURL(oldUrl), 100);
 
         setTotalPages(pdf.getPageCount());
-        setCurrentPage(1);
+        setCurrentPage((prev) => {
+          const n = pdf.getPageCount();
+          if (!n) return 1;
+          const safe = Math.min(Math.max(1, prev || 1), n);
+          return safe;
+        });
+
+        // Overlays are now baked into the PDF.
         setUndoStack([]);
         setTextBoxes([]);
         setImageBoxes([]);
@@ -5492,20 +5666,112 @@ function PDFEditor({ token, onLogout, currentUser }) {
         setSelectedRectangleId(null);
         setSelectedCircleId(null);
         setSelectedLineId(null);
+        pendingGitActionsRef.current = [];
 
-        // Refresh recent docs after saving
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set("doc", newId);
+          window.history.replaceState(null, "", url.toString());
+        } catch {
+          // ignore
+        }
+
         fetchRecentDocs();
       } catch (e) {
         console.error(e);
-        alert(
-          e?.response?.data?.error ||
-            e.message ||
-            "Failed to save securely (download will still proceed)",
+        const msg = await getApiErrorMessage(
+          e,
+          "Fast save failed; downloading locally (Git tree will NOT update).",
         );
+        alert(msg);
+        triggerBrowserDownload(pdfBytes, "edited-document.pdf");
       }
+    } finally {
+      setDownloadLoading(false);
     }
+  };
 
-    triggerBrowserDownload(downloadBytes, "edited-document.pdf");
+  const handleSecureDownload = async () => {
+    if (!pdfDoc) return;
+    if (downloadLoading) return;
+
+    setDownloadLoading(true);
+    try {
+
+      const pdfBytes = await buildExportPdfBytes();
+      let downloadBytes = pdfBytes;
+
+    // Persist to secure backend storage by creating a new version, then download the saved bytes.
+    // After a successful save, reload that saved version into the editor so the visible PDF,
+    // the active docId, and the Git metadata all refer to the same document.
+      if (docId) {
+        try {
+          const fd = new FormData();
+          fd.append(
+            "pdf",
+            new Blob([pdfBytes], { type: "application/pdf" }),
+            "edited.pdf",
+          );
+
+          const gitActions = buildGitActionsForSave();
+          if (gitActions.length > 0) {
+            fd.append("gitActions", JSON.stringify(gitActions));
+          }
+
+          const res = await api.post(`/documents/${docId}/update`, fd);
+          const newId = res.data?.id;
+          if (!newId) throw new Error("Update failed");
+
+          const downloadRes = await api.get(`/documents/${newId}/download`, {
+            responseType: "arraybuffer",
+          });
+          downloadBytes = downloadRes.data;
+
+          // Refresh editor state to the newly stored, sanitized PDF version.
+          const blob = new Blob([downloadBytes], { type: "application/pdf" });
+          const arrayBuffer = await blob.arrayBuffer();
+          const pdf = await PDFDocument.load(arrayBuffer);
+
+          setDocId(newId);
+          setPdfDoc(pdf);
+          const oldUrl = pdfFile;
+          const newUrl = URL.createObjectURL(blob);
+          setPdfFile(newUrl);
+          if (oldUrl) setTimeout(() => URL.revokeObjectURL(oldUrl), 100);
+
+          setTotalPages(pdf.getPageCount());
+          setCurrentPage(1);
+          setUndoStack([]);
+          setTextBoxes([]);
+          setImageBoxes([]);
+          setTextSelections([]);
+          setRectangleBoxes([]);
+          setCircleBoxes([]);
+          setLineBoxes([]);
+          setEditMode(null);
+          setSelectedTextId(null);
+          setSelectedRectangleId(null);
+          setSelectedCircleId(null);
+          setSelectedLineId(null);
+
+          pendingGitActionsRef.current = [];
+
+          // Refresh recent docs after saving
+          fetchRecentDocs();
+        } catch (e) {
+          console.error(e);
+          alert(
+            e?.response?.data?.error ||
+              e.message ||
+              "Failed to save securely (download will still proceed)",
+          );
+        }
+      }
+
+      triggerBrowserDownload(downloadBytes, "edited-document.pdf");
+    } finally {
+      setDownloadLoading(false);
+    }
   };
 
   const handleSecureRedact = async () => {
@@ -5652,10 +5918,32 @@ function PDFEditor({ token, onLogout, currentUser }) {
       );
       const inspection = res.data?.inspection;
       if (!inspection) throw new Error("Inspection failed");
+
+      if (inspection.looksSigned) {
+        alert("Embedded signature detected (ByteRange looks valid)");
+        return;
+      }
+
+      const markers = [
+        inspection.hasSigField ? "SigField" : null,
+        inspection.hasByteRange ? "ByteRange" : null,
+        inspection.hasContents ? "Contents" : null,
+      ].filter(Boolean);
+
+      const issues = Array.isArray(inspection.issues)
+        ? inspection.issues
+        : [];
+
+      const details = [];
+      if (markers.length > 0) details.push(`Markers found: ${markers.join(", ")}`);
+      if (inspection.byteRange)
+        details.push(`ByteRange: [${inspection.byteRange.join(" ")}]`);
+      if (typeof inspection.contentsBytesLength === "number")
+        details.push(`Contents bytes: ${inspection.contentsBytesLength}`);
+      if (issues.length > 0) details.push(`Issues:\n- ${issues.join("\n- ")}`);
+
       alert(
-        inspection.looksSigned
-          ? "Embedded signature detected"
-          : "No embedded signature detected",
+        `No valid embedded signature detected${details.length ? `\n\n${details.join("\n")}` : ""}`,
       );
     } catch (e) {
       console.error(e);
@@ -5664,14 +5952,53 @@ function PDFEditor({ token, onLogout, currentUser }) {
   };
 
   const handlePageChange = (direction) => {
-    if ((direction === "next" || direction === 1) && currentPage < totalPages) {
-      setCurrentPage(currentPage + 1);
-    } else if ((direction === "prev" || direction === -1) && currentPage > 1) {
-      setCurrentPage(currentPage - 1);
-    }
-    // Don't remove text boxes - keep them all in state
-    // Only render the ones for the current page
+    const n = Number(totalPages) || 0;
+    if (n <= 1) return;
+
+    const dir =
+      direction === "next" || direction === 1
+        ? 1
+        : direction === "prev" || direction === -1
+          ? -1
+          : 0;
+    if (!dir) return;
+
+    setCurrentPage((prev) => {
+      const cur = Number(prev) || 1;
+      const next = Math.min(Math.max(1, cur + dir), n);
+      return next;
+    });
   };
+
+  // Keyboard navigation (ArrowLeft/ArrowRight) for page changes.
+  useEffect(() => {
+    if (!pdfFile) return;
+
+    const onKeyDown = (e) => {
+      if (e.defaultPrevented) return;
+      if (!pdfFile) return;
+
+      const active = document.activeElement;
+      const tag = active?.tagName ? String(active.tagName).toLowerCase() : "";
+      const typing =
+        active?.isContentEditable ||
+        tag === "input" ||
+        tag === "textarea" ||
+        tag === "select";
+      if (typing) return;
+
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        handlePageChange("prev");
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        handlePageChange("next");
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [pdfFile, totalPages]);
 
   // PDF to Images conversion
   const handlePdfToImages = async () => {
@@ -6107,13 +6434,31 @@ function PDFEditor({ token, onLogout, currentUser }) {
               gap: "10px",
             }}
           >
-            <img
-              src="/images/iitr_logo.png"
-              alt="Logo"
-              className="header-logo"
-              style={{ width: "22px", height: "22px" }}
-            />
-            PDF Editor
+            <button
+              type="button"
+              onClick={goHome}
+              title="Go to home"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                padding: 0,
+                margin: 0,
+                border: "none",
+                background: "none",
+                color: "inherit",
+                font: "inherit",
+                cursor: "pointer",
+              }}
+            >
+              <img
+                src="/images/iitr_logo.png"
+                alt="Logo"
+                className="header-logo"
+                style={{ width: "22px", height: "22px" }}
+              />
+              <span>I Hate PDF</span>
+            </button>
           </h1>
         </div>
 
@@ -6841,6 +7186,7 @@ function PDFEditor({ token, onLogout, currentUser }) {
               setFontSize={setFontSize}
               onDownload={handleNormalDownload}
               onSecureDownload={handleSecureDownload}
+              downloadLoading={downloadLoading}
               onUndo={performUndo}
               onApplyText={handleApplyText}
               hasTextBoxes={textBoxes.length > 0}
@@ -6885,6 +7231,7 @@ function PDFEditor({ token, onLogout, currentUser }) {
               gitSignatureOk={gitSignatureOk}
               gitDocId={docId}
               onGitInit={handleGitInit}
+              gitInitLoading={gitInitLoading}
               onGitHistory={handleGitHistory}
               onGitVerify={handleGitVerify}
             />
@@ -7105,10 +7452,10 @@ function PDFEditor({ token, onLogout, currentUser }) {
                 }}
               >
                 <h3 style={{ margin: 0, color: "#000000", fontSize: "18px" }}>
-                  ✍️ Sign your name
+                  Sign your name
                 </h3>
                 <p style={{ margin: 0, fontSize: "13px", color: "#666" }}>
-                  Type your full name below — it will appear in elegant cursive
+                  Type your full name below & it will appear in elegant cursive
                   on the PDF.
                 </p>
                 <input

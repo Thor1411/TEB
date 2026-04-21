@@ -48,6 +48,45 @@ This project now supports a more secure, server-mediated workflow designed to re
 - **Integrity signatures (platform-level)**: the platform can sign and verify document byte hashes (note: not an embedded PAdES signature yet).
 - **Embedded PDF signatures (PKCS#12)**: optional endpoint to create a real, embedded (in-document) signature using `@signpdf`.
 
+## Git Notes (Repo Git vs “PDF Git”)
+
+There are **two different things** called “git” in this project:
+
+- **Repo Git (normal `git`)** tracks source code changes in this folder.
+- **PDF Git (TEB feature)** stores a version-history object *inside the PDF itself* as an **embedded attachment** named `teb-git.json`.
+
+### Why `git status` may “not show my changes”
+
+The backend stores encrypted PDFs + audit/meta files under `backend/secure_storage/`.
+That directory is **intentionally git-ignored** via `backend/.gitignore`:
+
+- If you edit files under `backend/secure_storage/`, repo git will not show them.
+- To confirm, you can run `git status --ignored`.
+
+### Why external PDF editors “remove PDF Git info”
+
+PDF Git is embedded using PDF **attachments** (`EmbeddedFiles`). Many PDF editors/viewers:
+
+- rewrite PDFs on save,
+- drop unknown attachments/metadata,
+- or do “Save As” that rebuilds the file structure.
+
+So after editing in a different PDF editor, it’s normal for `teb-git.json` to disappear.
+
+### Recommended workflow (backup + restore)
+
+If you *must* edit in an external editor, do this:
+
+1. **Extract** the embedded git metadata *before* external editing:
+   - `cd backend`
+   - `npm run pdfgit:extract -- /path/to/input.pdf /path/to/teb-git.json`
+2. Edit the PDF in your external editor and save it.
+3. **Re-embed** the metadata into the edited PDF:
+   - `cd backend`
+   - `npm run pdfgit:embed -- /path/to/edited.pdf /path/to/teb-git.json /path/to/edited-with-git.pdf`
+
+If the external editor already stripped the metadata and you didn’t extract it first, the history cannot be recovered from the PDF alone.
+
 ## Getting Started
 
 ### Prerequisites

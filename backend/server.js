@@ -53,6 +53,89 @@ const MAX_SANITIZE_PAGES = Number(process.env.MAX_SANITIZE_PAGES || 50)
 
 const SHARE_SECRET = process.env.SHARE_SECRET || crypto.randomBytes(32).toString('base64')
 
+const fileExists = async (p) => {
+  try {
+    await fs.access(p)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const runOpenSSL = async ({ args, cwd, timeoutMs = 20_000 }) => {
+  await new Promise((resolve, reject) => {
+    const child = spawn('openssl', args, { cwd, shell: false, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+
+    let stderr = ''
+    child.stderr?.on('data', (d) => {
+      stderr += d.toString()
+      if (stderr.length > 20_000) stderr = stderr.slice(-20_000)
+    })
+
+    const timer = timeoutMs ? setTimeout(() => {
+      child.kill('SIGKILL')
+      reject(new Error('openssl timed out'))
+    }, timeoutMs) : null
+
+    child.on('error', (err) => {
+      if (timer) clearTimeout(timer)
+      reject(err)
+    })
+
+    child.on('close', (code) => {
+      if (timer) clearTimeout(timer)
+      if (code === 0) return resolve()
+      reject(new Error(`openssl failed (code ${code}): ${stderr || 'unknown error'}`))
+    })
+  })
+}
+
+const ensureDevSigningP12 = async () => {
+  const certDir = path.resolve(VAULT_DIR, 'certs')
+  await fs.mkdir(certDir, { recursive: true })
+
+  const p12Path = path.join(certDir, 'dev_signing.p12')
+  const passphrase = process.env.PDF_SIGN_P12_PASSPHRASE || 'devpass'
+  if (await fileExists(p12Path)) return { p12Path, passphrase }
+
+  const keyPath = path.join(certDir, 'dev_signing.key.pem')
+  const crtPath = path.join(certDir, 'dev_signing.crt.pem')
+
+  try {
+    await runOpenSSL({
+      cwd: certDir,
+      args: [
+        'req',
+        '-x509',
+        '-newkey', 'rsa:2048',
+        '-nodes',
+        '-keyout', keyPath,
+        '-out', crtPath,
+        '-days', '365',
+        '-subj', '/CN=TEB Dev Signing'
+      ]
+    })
+
+    await runOpenSSL({
+      cwd: certDir,
+      args: [
+        'pkcs12',
+        '-export',
+        '-out', p12Path,
+        '-inkey', keyPath,
+        '-in', crtPath,
+        '-passout', `pass:${passphrase}`
+      ]
+    })
+
+    return { p12Path, passphrase }
+  } finally {
+    // Best-effort cleanup of PEM materials; the .p12 is what we need.
+    await fs.rm(keyPath, { force: true }).catch(() => {})
+    await fs.rm(crtPath, { force: true }).catch(() => {})
+  }
+}
+
 const isSafeDocId = (id) => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
 
 const signShareToken = ({ docId, expMs }) => {
@@ -587,6 +670,114 @@ app.post('/api/documents/:id/update', authenticate, upload.single('pdf'), async 
   }
 })
 
+// Fast path: upload an updated version WITHOUT rasterize-sanitization.
+// Intended for "normal download" flows where we want detailed PDF-Git actions
+// but cannot afford the rasterize pipeline latency.
+// Still runs structural validation via qpdf.
+app.post('/api/documents/:id/update-fast', authenticate, upload.single('pdf'), async (req, res) => {
+  let tempPath
+  try {
+    const currentId = req.params.id
+    if (!isSafeDocId(currentId)) return res.status(400).json({ error: 'Invalid document id' })
+    if (!req.file) return res.status(400).json({ error: 'No PDF file uploaded' })
+    tempPath = req.file.path
+
+    const currentMeta = await readDocMeta(vault, currentId)
+    if (currentMeta.ownerId !== req.user.id) return res.status(403).json({ error: 'Forbidden' })
+
+    const inBytes = await fs.readFile(tempPath)
+    const validation = await validatePdfWithQpdf({ pdfBytes: inBytes, workDir: WORK_DIR })
+    if (!validation.ok) {
+      return res.status(400).json({ error: `PDF failed structural validation: ${validation.error}` })
+    }
+
+    // Preserve/advance embedded PDF Git metadata (no sanitization step here).
+    let finalBytes = inBytes
+    const gitActions = parseJsonField(req.body?.gitActions, null)
+    const gitMessage = typeof req.body?.gitMessage === 'string' ? req.body.gitMessage : null
+    const gitInitIfMissing = String(req.body?.gitInitIfMissing || '').toLowerCase() === 'true'
+
+    const { bytes: currentBytes } = await readDocBytes(vault, currentId)
+    const { git: existingGit } = await readPdfGit(currentBytes).catch(() => ({ git: null }))
+    const actor = { id: req.user.id, name: req.user.name, email: req.user.email }
+
+    const pageCount = currentMeta.pageCount
+
+    let git = existingGit
+    if (!git && gitInitIfMissing) {
+      git = createEmptyGitRepo({ actor, pageCount })
+    }
+
+    if (git?.tebPdfGit === true) {
+      // Best-effort: record page pixel hashes even on the fast path.
+      // If pdftoppm isn't available (or times out), we still allow saving,
+      // but verification will only be able to validate the Git signature.
+      let pageHashes = []
+      let pageHashWarning = null
+      try {
+        pageHashes = await computePagePixelHashes({
+          pdfBytes: inBytes,
+          workDir: WORK_DIR,
+          timeoutMs: PDFTOPPM_TIMEOUT_MS
+        })
+      } catch (e) {
+        pageHashes = []
+        pageHashWarning = e?.message || String(e)
+      }
+
+      const nextGit = appendGitCommit({
+        git,
+        actor,
+        message: gitMessage || 'Edit PDF',
+        actions: Array.isArray(gitActions) ? gitActions : [{ type: 'edit', pageCount }],
+        pageHashes
+      })
+      nextGit.signature = signGit(nextGit)
+      finalBytes = await writePdfGit(inBytes, nextGit)
+
+      // Surface any hashing issues to the client without failing the save.
+      // (The client can warn that tamper-check is limited.)
+      if (pageHashWarning) {
+        res.setHeader('X-TEB-PageHash-Warning', pageHashWarning)
+      }
+    }
+
+    const newId = crypto.randomUUID()
+    const now = new Date().toISOString()
+    const meta = await writeDoc(vault, newId, {
+      bytes: finalBytes,
+      ownerId: req.user.id,
+      originalName: req.body?.originalName || currentMeta?.originalName || req.file?.originalname || 'Untitled Document',
+      createdAt: now,
+      updatedAt: now,
+      pageCount,
+      parentId: currentId
+    })
+
+    await appendAuditEvent({
+      auditDir: vault.auditDir,
+      docId: currentId,
+      actor: req.user.id,
+      action: 'update-fast->newVersion',
+      details: { newId }
+    })
+
+    await appendAuditEvent({
+      auditDir: vault.auditDir,
+      docId: newId,
+      actor: req.user.id,
+      action: 'createVersion-fast',
+      details: { parentId: currentId, pageCount }
+    })
+
+    return res.json({ id: meta.id, pageCount: meta.pageCount, parentId: currentId })
+  } catch (e) {
+    return res.status(500).json({ error: e.message })
+  } finally {
+    if (tempPath) await fs.unlink(tempPath).catch(() => {})
+  }
+})
+
 app.get('/api/documents/:id/git', authenticate, async (req, res) => {
   try {
     const docId = req.params.id
@@ -677,20 +868,60 @@ app.get('/api/documents/:id/git/verify', authenticate, async (req, res) => {
     if (!head) return res.status(400).json({ error: 'Invalid git metadata: missing HEAD commit' })
 
     const expected = Array.isArray(head.pageHashes) ? head.pageHashes : []
-    const actual = await computePagePixelHashes({
-      pdfBytes: bytes,
-      workDir: WORK_DIR,
-      timeoutMs: PDFTOPPM_TIMEOUT_MS
-    })
 
-    const modifiedPages = []
-    const byPageExpected = new Map(expected.map(e => [e.page, e]))
-    for (const a of actual) {
-      const e = byPageExpected.get(a.page)
-      if (!e || e.digest !== a.digest || e.alg !== a.alg) {
-        modifiedPages.push(a.page)
-      }
+    // If the HEAD commit doesn't contain page hashes (e.g. an older fast-save
+    // build), do NOT treat it as tampering. We can still validate the Git
+    // signature, but we can't attribute pixel-level page changes.
+    if (expected.length === 0) {
+      const ok = sig?.ok === true
+      return res.json({
+        ok,
+        modifiedPages: [],
+        signature: sig,
+        head: { id: head.id, ts: head.ts, message: head.message, actor: head.actor },
+        pageHashCheck: {
+          skipped: true,
+          reason: 'No page hashes recorded in HEAD commit; page tamper check unavailable for this version.'
+        }
+      })
     }
+
+    let actual
+    try {
+      actual = await computePagePixelHashes({
+        pdfBytes: bytes,
+        workDir: WORK_DIR,
+        timeoutMs: PDFTOPPM_TIMEOUT_MS
+      })
+    } catch (e) {
+      const ok = sig?.ok === true
+      return res.json({
+        ok,
+        modifiedPages: [],
+        signature: sig,
+        head: { id: head.id, ts: head.ts, message: head.message, actor: head.actor },
+        pageHashCheck: {
+          skipped: true,
+          reason: `Page hashing failed; signature-only verification. ${e?.message || String(e)}`
+        }
+      })
+    }
+
+    const modifiedPageSet = new Set()
+    const byPageExpected = new Map(expected.map(e => [e.page, e]))
+    const byPageActual = new Map(actual.map(a => [a.page, a]))
+
+    // Pages missing or changed
+    for (const e of expected) {
+      const a = byPageActual.get(e.page)
+      if (!a || e.digest !== a.digest || e.alg !== a.alg) modifiedPageSet.add(e.page)
+    }
+    // Extra pages present
+    for (const a of actual) {
+      if (!byPageExpected.has(a.page)) modifiedPageSet.add(a.page)
+    }
+
+    const modifiedPages = Array.from(modifiedPageSet).sort((a, b) => a - b)
 
     const ok = modifiedPages.length === 0
     return res.json({
@@ -819,12 +1050,26 @@ app.post('/api/documents/:id/sign-embedded', authenticate, async (req, res) => {
     const docId = req.params.id
     if (!isSafeDocId(docId)) return res.status(400).json({ error: 'Invalid document id' })
 
-    const p12Path = process.env.PDF_SIGN_P12_PATH
-    const passphrase = process.env.PDF_SIGN_P12_PASSPHRASE
+    let p12Path = process.env.PDF_SIGN_P12_PATH
+    let passphrase = process.env.PDF_SIGN_P12_PASSPHRASE || ''
     if (!p12Path) {
-      return res.status(501).json({
-        error: 'Embedded signing not configured (set PDF_SIGN_P12_PATH and PDF_SIGN_P12_PASSPHRASE)'
-      })
+      const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production'
+      if (isProd) {
+        return res.status(501).json({
+          error: 'Embedded signing not configured (set PDF_SIGN_P12_PATH and PDF_SIGN_P12_PASSPHRASE)'
+        })
+      }
+
+      try {
+        const cfg = await ensureDevSigningP12()
+        p12Path = cfg.p12Path
+        passphrase = cfg.passphrase
+      } catch (e) {
+        const msg = e?.code === 'ENOENT'
+          ? 'Embedded signing needs OpenSSL installed, or set PDF_SIGN_P12_PATH to a .p12/.pfx file'
+          : (e?.message || 'Failed to create dev signing certificate')
+        return res.status(501).json({ error: msg })
+      }
     }
 
     const { meta, bytes } = await readDocBytes(vault, docId)
@@ -871,7 +1116,73 @@ app.get('/api/documents/:id/inspect-embedded-signature', authenticate, async (re
     if (!isSafeDocId(docId)) return res.status(400).json({ error: 'Invalid document id' })
     const { meta, bytes } = await readDocBytes(vault, docId)
     if (meta.ownerId !== req.user.id) return res.status(403).json({ error: 'Forbidden' })
-    return res.json({ inspection: inspectEmbeddedSignature(bytes) })
+
+    const inspection = inspectEmbeddedSignature(bytes)
+
+    // Best-effort cryptographic validation (requires OpenSSL).
+    // This checks the signature integrity but does not enforce trust chain (we use -noverify).
+    let cryptographicallyValid = null
+    let cryptoError = null
+
+    if (inspection?.validByteRange && inspection?.hasContents) {
+      try {
+        const buf = Buffer.from(bytes)
+        const s = buf.toString('latin1')
+        const byteRangeMatch = /\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/m.exec(s)
+        const scanStart = byteRangeMatch ? byteRangeMatch.index : 0
+        const scan = s.slice(scanStart, scanStart + 200_000)
+        const contentsMatch = /\/Contents\s*<\s*([0-9A-Fa-f\s]+)\s*>/m.exec(scan)
+
+        if (byteRangeMatch && contentsMatch) {
+          const byteRange = byteRangeMatch.slice(1, 5).map((n) => Number(n))
+          const [a, b, c, d] = byteRange
+
+          let hex = String(contentsMatch[1] || '').replace(/\s+/g, '')
+          let sig = Buffer.from(hex, 'hex')
+          // Trim padding zeros from placeholder.
+          while (sig.length > 0 && sig[sig.length - 1] === 0x00) sig = sig.slice(0, -1)
+
+          const signedContent = Buffer.concat([
+            buf.slice(a, a + b),
+            buf.slice(c, c + d)
+          ])
+
+          await fs.mkdir(WORK_DIR, { recursive: true })
+          const tmpDir = await fs.mkdtemp(path.join(path.resolve(WORK_DIR), 'sig-'))
+          const sigPath = path.join(tmpDir, 'sig.der')
+          const contentPath = path.join(tmpDir, 'content.bin')
+          const outPath = path.join(tmpDir, 'out.bin')
+
+          try {
+            await fs.writeFile(sigPath, sig)
+            await fs.writeFile(contentPath, signedContent)
+
+            await runOpenSSL({
+              cwd: tmpDir,
+              args: [
+                'cms',
+                '-verify',
+                '-inform', 'DER',
+                '-in', sigPath,
+                '-content', contentPath,
+                '-noverify',
+                '-out', outPath
+              ],
+              timeoutMs: 20_000
+            })
+
+            cryptographicallyValid = true
+          } finally {
+            await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+          }
+        }
+      } catch (e) {
+        cryptographicallyValid = false
+        cryptoError = e?.message || 'OpenSSL verification failed'
+      }
+    }
+
+    return res.json({ inspection: { ...inspection, cryptographicallyValid, cryptoError } })
   } catch (e) {
     return res.status(500).json({ error: e.message })
   }

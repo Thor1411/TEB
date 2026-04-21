@@ -6,7 +6,10 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "pdfgit:extract": "node scripts/pdf-git-extract.mjs",
+    "pdfgit:embed": "node scripts/pdf-git-embed.mjs",
+    "clear:storage": "node scripts/clear-storage.mjs --yes"
   },
   "dependencies": {
     "@signpdf/placeholder-pdf-lib": "^3.2.2",
